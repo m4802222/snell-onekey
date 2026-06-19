@@ -21,9 +21,9 @@ arch() {
 
 ver_full() {
   case "$1" in
-    4) echo 4.1.1 ;;
-    5) echo 5.0.1 ;;
-    6) echo 6.0.0b3 ;;
+    4) echo v4.1.1 ;;
+    5) echo v5.0.1 ;;
+    6) echo v6.0.0b3 ;;
     *) echo "版本只能选 4/5/6"; exit 1 ;;
   esac
 }
