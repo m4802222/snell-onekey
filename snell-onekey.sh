@@ -312,44 +312,81 @@ EOF
 }
 
 list_instances() {
-  printf "%-22s %-6s %-8s %-12s %-14s %-12s\n" "实例名称" "版本" "端口" "状态" "已用流量" "流量上限"
-  for e in "$CONF"/*.env; do
-    [[ -e "$e" ]] || continue
-    name=$(basename "$e" .env)
-    VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
-    # shellcheck disable=SC1090
-    . "$e"
-    state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
-    used=$(used_bytes "$name")
-    if is_limited "$name"; then
-      state="limited"
+  {
+    printf "实例名称\t版本\t端口\t状态\t已用流量\t流量上限\n"
+    for e in "$CONF"/*.env; do
+      [[ -e "$e" ]] || continue
+      name=$(basename "$e" .env)
+      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+      # shellcheck disable=SC1090
+      . "$e"
+      state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
+      used=$(used_bytes "$name")
+      if is_limited "$name"; then
+        state="limited"
+      fi
+      printf "%s\tv%s\t%s\t%s\t%s\t%s\n" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")"
+    done
+  } | {
+    if command -v column >/dev/null 2>&1; then
+      column -t -s $'\t'
+    else
+      cat
     fi
-    printf "%-22s v%-5s %-8s %-12s %-14s %-12s\n" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")"
-  done
+  }
 }
 
 service_menu() {
-  read -rp "操作 [start/stop/restart/status/logs/remove] 默认 status: " op
-  op=${op:-status}
-  read -rp "实例名: " name
-  [[ -n "$name" ]] || { echo "实例名不能为空"; return; }
+  local names=() e i choice name op
+  for e in "$CONF"/*.env; do
+    [[ -e "$e" ]] || continue
+    names+=("$(basename "$e" .env)")
+  done
+  [[ "${#names[@]}" -gt 0 ]] || { echo "暂无实例"; return; }
+
+  echo
+  echo "选择实例："
+  for i in "${!names[@]}"; do
+    printf "%s. %s\n" "$((i + 1))" "${names[$i]}"
+  done
+  echo "0. 返回"
+  read -rp "请选择，默认 1: " choice
+  choice=${choice:-1}
+  [[ "$choice" =~ ^[0-9]+$ ]] || { echo "选择错误"; return; }
+  [[ "$choice" -eq 0 ]] && return
+  [[ "$choice" -ge 1 && "$choice" -le "${#names[@]}" ]] || { echo "选择错误"; return; }
+  name="${names[$((choice - 1))]}"
+
+  echo
+  echo "选择操作："
+  echo "1. 启动"
+  echo "2. 停止"
+  echo "3. 重启"
+  echo "4. 查看状态"
+  echo "5. 查看日志"
+  echo "6. 删除"
+  echo "0. 返回"
+  read -rp "请选择，默认 4: " op
+  op=${op:-4}
   case "$op" in
-    start)
+    1)
       clear_limited "$name"
       systemctl start "snell@$name"
       ;;
-    restart)
+    2) systemctl stop "snell@$name" ;;
+    3)
       clear_limited "$name"
       systemctl restart "snell@$name"
       ;;
-    stop|status) systemctl "$op" "snell@$name" ;;
-    logs) journalctl -u "snell@$name" -f ;;
-    remove)
+    4) systemctl status "snell@$name" --no-pager ;;
+    5) journalctl -u "snell@$name" -f ;;
+    6)
       systemctl disable --now "snell@$name" || true
       rm -f "$CONF/$name.conf" "$CONF/$name.env" "$CONF/$name.limited"
       systemctl daemon-reload
       echo "已删除 $name"
       ;;
+    0) return ;;
     *) echo "未知操作" ;;
   esac
 }
