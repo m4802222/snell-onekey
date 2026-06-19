@@ -145,6 +145,10 @@ port_is_listening() {
   fi
 }
 
+valid_port() {
+  [[ "${1:-}" =~ ^[0-9]+$ ]] && [[ "$1" -ge 1 && "$1" -le 65535 ]]
+}
+
 random_port() {
   local port
   while true; do
@@ -154,6 +158,45 @@ random_port() {
     echo "$port"
     return
   done
+}
+
+choose_port() {
+  local port
+  read -rp "监听端口，留空随机: " port
+  if [[ -z "$port" ]]; then
+    random_port
+    return
+  fi
+  valid_port "$port" || { echo "端口必须是 1-65535"; return 1; }
+  port_exists_in_config "$port" && { echo "端口已被当前脚本实例使用"; return 1; }
+  port_is_listening "$port" && { echo "端口正在被系统占用"; return 1; }
+  echo "$port"
+}
+
+open_port() {
+  local port=$1
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw allow "$port/tcp" >/dev/null 2>&1 || true
+  elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --add-port="$port/tcp" --permanent >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+  elif command -v iptables >/dev/null 2>&1; then
+    iptables -C INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+  fi
+}
+
+close_port() {
+  local port=$1
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw delete allow "$port/tcp" >/dev/null 2>&1 || true
+  elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --remove-port="$port/tcp" --permanent >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+  elif command -v iptables >/dev/null 2>&1; then
+    while iptables -C INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1; do
+      iptables -D INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || break
+    done
+  fi
 }
 
 install_bin() {
@@ -257,6 +300,7 @@ check_limits() {
     used=$(used_bytes "$name")
     if [[ "$used" -ge "$limit" ]]; then
       systemctl stop "snell@$name" >/dev/null 2>&1 || true
+      close_port "$PORT"
       mark_limited "$name"
       echo "$name 已超过流量上限 $(traffic_limit_text "$LIMIT_GB")，已自动停用。"
     fi
@@ -269,7 +313,7 @@ add_instance() {
   v=${v:-5}
   [[ "$v" =~ ^[456]$ ]] || { echo "版本错误"; return; }
   name=$(next_instance_name)
-  port=$(random_port)
+  port=$(choose_port) || return
   psk=$(rand_psk)
   read -rp "obfs [tls/http/off] 默认 tls: " obfs
   obfs=${obfs:-tls}
@@ -300,6 +344,7 @@ EOF
 
   chmod 600 "$CONF/$name.conf" "$CONF/$name.env"
   clear_limited "$name"
+  open_port "$port"
   systemctl enable --now "snell@$name"
   server_ip=$(public_ip)
   echo
@@ -371,17 +416,35 @@ service_menu() {
   case "$op" in
     1)
       clear_limited "$name"
+      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+      # shellcheck disable=SC1090
+      . "$CONF/$name.env"
+      open_port "$PORT"
       systemctl start "snell@$name"
       ;;
-    2) systemctl stop "snell@$name" ;;
+    2)
+      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+      # shellcheck disable=SC1090
+      . "$CONF/$name.env"
+      systemctl stop "snell@$name"
+      close_port "$PORT"
+      ;;
     3)
       clear_limited "$name"
+      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+      # shellcheck disable=SC1090
+      . "$CONF/$name.env"
+      open_port "$PORT"
       systemctl restart "snell@$name"
       ;;
     4) systemctl status "snell@$name" --no-pager ;;
     5) journalctl -u "snell@$name" -f ;;
     6)
+      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+      # shellcheck disable=SC1090
+      . "$CONF/$name.env"
       systemctl disable --now "snell@$name" || true
+      close_port "$PORT"
       rm -f "$CONF/$name.conf" "$CONF/$name.env" "$CONF/$name.limited"
       systemctl daemon-reload
       echo "已删除 $name"

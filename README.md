@@ -33,12 +33,13 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 添加实例时只需要选择版本，直接回车默认安装 v5：
 
 - 实例名自动使用 VPS 主机名并按顺序编号，例如 `myvps-1`、`myvps-2`
-- 端口自动随机选择
+- 端口可自定义，留空自动随机选择
 - PSK 自动生成
 - obfs 默认 `tls`
 - 可设置流量上限，单位 GB，留空为不限
 - 安装完成后会输出可直接复制的 Surge 节点配置和服务端配置
 - 设置流量上限后，系统会每 5 分钟检查一次，超过上限自动停用对应实例
+- 生成配置时会自动放行本机防火墙端口；流量用完自动停止实例并关闭本机端口
 
 ## 支持版本
 
@@ -53,4 +54,4 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - 二进制目录：`/opt/snell-multi/bin`
 - 流量显示优先使用 systemd `IPAccounting=true`，列表为中文并显示已用流量和流量上限。
 - 自动停用依赖 `snell-limit-check.timer`，每 5 分钟检查一次。
-- 记得在云厂商安全组或防火墙放行实例端口。
+- 脚本会尝试处理本机 `ufw`、`firewalld` 或 `iptables` 端口；云厂商安全组仍需你在控制台单独配置。
