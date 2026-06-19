@@ -105,6 +105,47 @@ is_limited() {
   [[ -f "$CONF/$1.limited" ]]
 }
 
+fix_obfs_for_instance() {
+  local name=$1 env="$CONF/$1.env" conf="$CONF/$1.conf"
+  [[ -f "$env" && -f "$conf" ]] || return 0
+  VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+  # shellcheck disable=SC1090
+  . "$env"
+  if [[ "${VER:-}" != "6" ]] && grep -qiE '^[[:space:]]*obfs[[:space:]]*=[[:space:]]*tls[[:space:]]*$' "$conf"; then
+    sed -i.bak '/^[[:space:]]*obfs[[:space:]]*=[[:space:]]*tls[[:space:]]*$/Id' "$conf"
+    if grep -q '^OBFS=' "$env"; then
+      sed -i.bak 's/^OBFS=.*/OBFS=off/' "$env"
+    else
+      echo "OBFS=off" >> "$env"
+    fi
+    rm -f "$conf.bak" "$env.bak"
+    echo "$name: 已修复 v${VER} 不支持的 obfs=tls"
+  fi
+}
+
+fix_all_obfs() {
+  local e name
+  for e in "$CONF"/*.env; do
+    [[ -e "$e" ]] || continue
+    name=$(basename "$e" .env)
+    fix_obfs_for_instance "$name"
+  done
+}
+
+print_client_config() {
+  local name=$1 server_ip
+  fix_obfs_for_instance "$name"
+  VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+  # shellcheck disable=SC1090
+  . "$CONF/$name.env"
+  server_ip=$(public_ip)
+  if [[ "${OBFS:-off}" == off ]]; then
+    echo "${name} = snell, ${server_ip}, ${PORT}, psk=${PSK}, version=${VER}"
+  else
+    echo "${name} = snell, ${server_ip}, ${PORT}, psk=${PSK}, version=${VER}, obfs=${OBFS}"
+  fi
+}
+
 host_prefix() {
   local h
   h=$(hostname 2>/dev/null || echo vps)
@@ -220,6 +261,7 @@ restart_version() {
     [[ -e "$e" ]] || continue
     VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
     name=$(basename "$e" .env)
+    fix_obfs_for_instance "$name"
     # shellcheck disable=SC1090
     . "$e"
     [[ "${VER:-}" == "$v" ]] || continue
@@ -293,6 +335,7 @@ check_limits() {
     [[ -e "$e" ]] || continue
     VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
     name=$(basename "$e" .env)
+    fix_obfs_for_instance "$name"
     # shellcheck disable=SC1090
     . "$e"
     limit=$(limit_bytes "${LIMIT_GB:-0}")
@@ -308,7 +351,7 @@ check_limits() {
 }
 
 add_instance() {
-  local v name port psk obfs limit_gb server_ip
+  local v name port psk obfs limit_gb
   read -rp "选择版本 [4/5/6] 默认 5: " v
   v=${v:-5}
   [[ "$v" =~ ^[456]$ ]] || { echo "版本错误"; return; }
@@ -350,14 +393,9 @@ EOF
   clear_limited "$name"
   open_port "$port"
   systemctl enable --now "snell@$name"
-  server_ip=$(public_ip)
   echo
   echo "安装完成，复制下面配置即可："
-  if [[ "$obfs" == off ]]; then
-    echo "${name} = snell, ${server_ip}, ${port}, psk=${psk}, version=${v}"
-  else
-    echo "${name} = snell, ${server_ip}, ${port}, psk=${psk}, version=${v}, obfs=${obfs}"
-  fi
+  print_client_config "$name"
 }
 
 list_instances() {
@@ -367,6 +405,7 @@ list_instances() {
       [[ -e "$e" ]] || continue
       name=$(basename "$e" .env)
       VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+      fix_obfs_for_instance "$name"
       # shellcheck disable=SC1090
       . "$e"
       state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
@@ -414,6 +453,8 @@ service_menu() {
   echo "4. 查看状态"
   echo "5. 查看日志"
   echo "6. 删除"
+  echo "7. 复制配置"
+  echo "8. 修复配置"
   echo "0. 返回"
   read -rp "请选择，默认 4: " op
   op=${op:-4}
@@ -453,16 +494,26 @@ service_menu() {
       systemctl daemon-reload
       echo "已删除 $name"
       ;;
+    7) print_client_config "$name" ;;
+    8)
+      fix_obfs_for_instance "$name"
+      systemctl restart "snell@$name"
+      echo "已修复并重启 $name"
+      echo "复制配置："
+      print_client_config "$name"
+      ;;
     0) return ;;
     *) echo "未知操作" ;;
   esac
 }
 
 if [[ "${1:-}" == "check-limits" ]]; then
+  fix_all_obfs
   check_limits
   exit 0
 fi
 
+fix_all_obfs
 write_limit_timer
 
 while true; do
