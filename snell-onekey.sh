@@ -30,6 +30,57 @@ ver_full() {
 
 rand_psk() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
 
+host_prefix() {
+  local h
+  h=$(hostname 2>/dev/null || echo vps)
+  h=$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_.-]/-/g; s/^-*//; s/-*$//')
+  [[ -n "$h" ]] || h=vps
+  echo "$h"
+}
+
+next_instance_name() {
+  local prefix i
+  prefix=$(host_prefix)
+  i=1
+  while [[ -e "$CONF/${prefix}-${i}.env" || -e "$CONF/${prefix}-${i}.conf" ]]; do
+    i=$((i + 1))
+  done
+  echo "${prefix}-${i}"
+}
+
+port_exists_in_config() {
+  local port=$1 e
+  for e in "$CONF"/*.env; do
+    [[ -e "$e" ]] || continue
+    # shellcheck disable=SC1090
+    . "$e"
+    [[ "${PORT:-}" == "$port" ]] && return 0
+  done
+  return 1
+}
+
+port_is_listening() {
+  local port=$1
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${port}$"
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | awk 'NR>2 {print $4}' | grep -Eq "(^|:)${port}$"
+  else
+    return 1
+  fi
+}
+
+random_port() {
+  local port
+  while true; do
+    port=$((20000 + RANDOM % 40000))
+    port_exists_in_config "$port" && continue
+    port_is_listening "$port" && continue
+    echo "$port"
+    return
+  done
+}
+
 install_bin() {
   local v=$1 force=${2:-0} full url tmp
   full=$(ver_full "$v")
@@ -89,16 +140,16 @@ EOF
 }
 
 add_instance() {
-  read -rp "选择版本 [4/5/6]: " v
+  local v name port psk obfs
+  read -rp "选择版本 [4/5/6] 默认 5: " v
+  v=${v:-5}
   [[ "$v" =~ ^[456]$ ]] || { echo "版本错误"; return; }
-  read -rp "实例名，例如 hk-v$v-1: " name
-  [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "实例名只能用字母数字._-"; return; }
-  read -rp "监听端口: " port
-  [[ "$port" =~ ^[0-9]+$ ]] || { echo "端口错误"; return; }
-  read -rp "PSK，留空随机: " psk
-  psk=${psk:-$(rand_psk)}
+  name=$(next_instance_name)
+  port=$(random_port)
+  psk=$(rand_psk)
   read -rp "obfs [tls/http/off] 默认 tls: " obfs
   obfs=${obfs:-tls}
+  [[ "$obfs" =~ ^(tls|http|off)$ ]] || { echo "obfs 只能是 tls/http/off"; return; }
 
   install_bin "$v"
   write_unit
@@ -123,6 +174,7 @@ EOF
   echo "版本: v$v"
   echo "端口: $port"
   echo "PSK: $psk"
+  echo "obfs: $obfs"
 }
 
 list_instances() {
@@ -140,8 +192,10 @@ list_instances() {
 }
 
 service_menu() {
-  read -rp "操作 [start/stop/restart/status/logs/remove]: " op
+  read -rp "操作 [start/stop/restart/status/logs/remove] 默认 status: " op
+  op=${op:-status}
   read -rp "实例名: " name
+  [[ -n "$name" ]] || { echo "实例名不能为空"; return; }
   case "$op" in
     start|stop|restart|status) systemctl "$op" "snell@$name" ;;
     logs) journalctl -u "snell@$name" -f ;;
@@ -163,7 +217,8 @@ while true; do
   echo "3. 启停/日志/删除"
   echo "4. 一键升级全部版本"
   echo "0. 退出"
-  read -rp "请选择: " n
+  read -rp "请选择，默认 1: " n
+  n=${n:-1}
   case "$n" in
     1) add_instance ;;
     2) list_instances ;;

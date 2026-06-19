@@ -30,6 +30,13 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 0. 退出
 ```
 
+添加实例时只需要选择版本，直接回车默认安装 v5：
+
+- 实例名自动使用 VPS 主机名并按顺序编号，例如 `myvps-1`、`myvps-2`
+- 端口自动随机选择
+- PSK 自动生成
+- obfs 默认 `tls`
+
 ## 支持版本
 
 - Snell v4: `4.1.1`
