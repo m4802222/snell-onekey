@@ -30,6 +30,48 @@ ver_full() {
 
 rand_psk() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
 
+public_ip() {
+  local ip
+  ip=$(curl -4fsS --connect-timeout 3 https://api.ipify.org 2>/dev/null || true)
+  [[ -n "$ip" ]] || ip=$(curl -4fsS --connect-timeout 3 https://ifconfig.me 2>/dev/null || true)
+  [[ -n "$ip" ]] || ip="你的服务器IP"
+  echo "$ip"
+}
+
+human_bytes() {
+  local bytes=${1:-0}
+  awk -v b="$bytes" 'BEGIN {
+    split("B KB MB GB TB", u, " ");
+    i = 1;
+    while (b >= 1024 && i < 5) { b /= 1024; i++ }
+    if (i == 1) printf "%d%s", b, u[i]; else printf "%.2f%s", b, u[i]
+  }'
+}
+
+num_or_zero() {
+  [[ "${1:-}" =~ ^[0-9]+$ ]] && echo "$1" || echo 0
+}
+
+traffic_limit_text() {
+  local gb=${1:-0}
+  if [[ "$gb" =~ ^[0-9]+$ && "$gb" -gt 0 ]]; then
+    echo "${gb}G"
+  else
+    echo "不限"
+  fi
+}
+
+state_text() {
+  case "${1:-unknown}" in
+    active) echo "运行中" ;;
+    activating) echo "启动中" ;;
+    inactive) echo "已停止" ;;
+    failed) echo "失败" ;;
+    deactivating) echo "停止中" ;;
+    *) echo "${1:-未知}" ;;
+  esac
+}
+
 host_prefix() {
   local h
   h=$(hostname 2>/dev/null || echo vps)
@@ -100,6 +142,7 @@ restart_version() {
   local v=$1 e name
   for e in "$CONF"/*.env; do
     [[ -e "$e" ]] || continue
+    VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
     name=$(basename "$e" .env)
     # shellcheck disable=SC1090
     . "$e"
@@ -140,7 +183,7 @@ EOF
 }
 
 add_instance() {
-  local v name port psk obfs
+  local v name port psk obfs limit_gb server_ip
   read -rp "选择版本 [4/5/6] 默认 5: " v
   v=${v:-5}
   [[ "$v" =~ ^[456]$ ]] || { echo "版本错误"; return; }
@@ -150,6 +193,9 @@ add_instance() {
   read -rp "obfs [tls/http/off] 默认 tls: " obfs
   obfs=${obfs:-tls}
   [[ "$obfs" =~ ^(tls|http|off)$ ]] || { echo "obfs 只能是 tls/http/off"; return; }
+  read -rp "流量上限，单位G，留空不限: " limit_gb
+  limit_gb=${limit_gb:-0}
+  [[ "$limit_gb" =~ ^[0-9]+$ ]] || { echo "流量上限只能填数字"; return; }
 
   install_bin "$v"
   write_unit
@@ -165,20 +211,39 @@ EOF
   cat > "$CONF/$name.env" <<EOF
 VER=$v
 PORT=$port
+PSK=$psk
+OBFS=$obfs
+LIMIT_GB=$limit_gb
 EOF
 
   chmod 600 "$CONF/$name.conf" "$CONF/$name.env"
   systemctl enable --now "snell@$name"
+  server_ip=$(public_ip)
   echo
-  echo "已安装: snell@$name"
+  echo "安装完成，下面配置可以直接复制："
+  echo
+  echo "===== Surge 节点配置 ====="
+  if [[ "$obfs" == off ]]; then
+    echo "${name} = snell, ${server_ip}, ${port}, psk=${psk}, version=${v}"
+  else
+    echo "${name} = snell, ${server_ip}, ${port}, psk=${psk}, version=${v}, obfs=${obfs}"
+  fi
+  echo
+  echo "===== 服务端配置 ====="
+  cat "$CONF/$name.conf"
+  echo
+  echo "===== 信息 ====="
+  echo "实例名称: $name"
   echo "版本: v$v"
+  echo "服务器: $server_ip"
   echo "端口: $port"
   echo "PSK: $psk"
   echo "obfs: $obfs"
+  echo "流量上限: $(traffic_limit_text "$limit_gb")"
 }
 
 list_instances() {
-  printf "%-22s %-4s %-7s %-10s %-12s %-12s\n" NAME VER PORT STATE RX TX
+  printf "%-22s %-6s %-8s %-12s %-14s %-12s\n" "实例名称" "版本" "端口" "状态" "已用流量" "流量上限"
   for e in "$CONF"/*.env; do
     [[ -e "$e" ]] || continue
     name=$(basename "$e" .env)
@@ -187,7 +252,10 @@ list_instances() {
     state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
     rx=$(systemctl show "snell@$name" -p IPIngressBytes --value 2>/dev/null || echo 0)
     tx=$(systemctl show "snell@$name" -p IPEgressBytes --value 2>/dev/null || echo 0)
-    printf "%-22s v%-3s %-7s %-10s %-12s %-12s\n" "$name" "$VER" "$PORT" "${state:-unknown}" "$rx" "$tx"
+    rx=$(num_or_zero "$rx")
+    tx=$(num_or_zero "$tx")
+    used=$(( ${rx:-0} + ${tx:-0} ))
+    printf "%-22s v%-5s %-8s %-12s %-14s %-12s\n" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")"
   done
 }
 
