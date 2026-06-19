@@ -303,26 +303,12 @@ EOF
   systemctl enable --now "snell@$name"
   server_ip=$(public_ip)
   echo
-  echo "安装完成，下面配置可以直接复制："
-  echo
-  echo "===== Surge 节点配置 ====="
+  echo "安装完成，复制下面配置即可："
   if [[ "$obfs" == off ]]; then
     echo "${name} = snell, ${server_ip}, ${port}, psk=${psk}, version=${v}"
   else
     echo "${name} = snell, ${server_ip}, ${port}, psk=${psk}, version=${v}, obfs=${obfs}"
   fi
-  echo
-  echo "===== 服务端配置 ====="
-  cat "$CONF/$name.conf"
-  echo
-  echo "===== 信息 ====="
-  echo "实例名称: $name"
-  echo "版本: v$v"
-  echo "服务器: $server_ip"
-  echo "端口: $port"
-  echo "PSK: $psk"
-  echo "obfs: $obfs"
-  echo "流量上限: $(traffic_limit_text "$limit_gb")"
 }
 
 list_instances() {
