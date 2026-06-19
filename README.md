@@ -5,13 +5,13 @@
 ## 一键安装
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/m4802222/snell-onekey/main/install.sh)
+bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install.sh)
 ```
 
 也可以直接运行主脚本：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/m4802222/snell-onekey/main/snell-onekey.sh)
+bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey.sh)
 ```
 
 ## 菜单功能
