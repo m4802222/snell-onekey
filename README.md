@@ -11,7 +11,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install.sh)
 安装后运行：
 
 ```bash
-n
+snell
 ```
 
 也可以直接运行主脚本：
