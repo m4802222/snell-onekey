@@ -35,7 +35,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - 实例名自动使用 VPS 主机名并按顺序编号，例如 `myvps-1`、`myvps-2`
 - 端口可自定义，留空自动随机选择
 - PSK 自动生成
-- obfs 默认 `tls`
+- obfs 默认关闭；v4/v5 不输出 `obfs=tls`
 - 可设置流量上限，单位 GB，留空为不限
 - 安装完成后会输出可直接复制的 Surge 节点配置和服务端配置
 - 设置流量上限后，系统会每 5 分钟检查一次，超过上限自动停用对应实例

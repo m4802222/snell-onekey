@@ -315,9 +315,13 @@ add_instance() {
   name=$(next_instance_name)
   port=$(choose_port) || return
   psk=$(rand_psk)
-  read -rp "obfs [tls/http/off] 默认 tls: " obfs
-  obfs=${obfs:-tls}
-  [[ "$obfs" =~ ^(tls|http|off)$ ]] || { echo "obfs 只能是 tls/http/off"; return; }
+  read -rp "obfs [http/tls/off] 默认 off: " obfs
+  obfs=${obfs:-off}
+  [[ "$obfs" =~ ^(tls|http|off)$ ]] || { echo "obfs 只能是 http/tls/off"; return; }
+  if [[ "$obfs" == "tls" && "$v" != "6" ]]; then
+    echo "Snell v4/v5 不支持 tls obfs，已自动改为 off"
+    obfs=off
+  fi
   read -rp "流量上限，单位G，留空不限: " limit_gb
   limit_gb=${limit_gb:-0}
   [[ "$limit_gb" =~ ^[0-9]+$ ]] || { echo "流量上限只能填数字"; return; }
