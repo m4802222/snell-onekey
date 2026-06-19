@@ -9,6 +9,8 @@ fi
 BASE=/opt/snell-multi
 CONF=/etc/snell-multi
 UNIT=/etc/systemd/system/snell@.service
+LIMIT_SERVICE=/etc/systemd/system/snell-limit-check.service
+LIMIT_TIMER=/etc/systemd/system/snell-limit-check.timer
 mkdir -p "$BASE/bin" "$CONF"
 
 arch() {
@@ -67,9 +69,40 @@ state_text() {
     activating) echo "启动中" ;;
     inactive) echo "已停止" ;;
     failed) echo "失败" ;;
+    limited) echo "超限停用" ;;
     deactivating) echo "停止中" ;;
     *) echo "${1:-未知}" ;;
   esac
+}
+
+used_bytes() {
+  local name=$1 rx tx
+  rx=$(systemctl show "snell@$name" -p IPIngressBytes --value 2>/dev/null || echo 0)
+  tx=$(systemctl show "snell@$name" -p IPEgressBytes --value 2>/dev/null || echo 0)
+  rx=$(num_or_zero "$rx")
+  tx=$(num_or_zero "$tx")
+  echo $((rx + tx))
+}
+
+limit_bytes() {
+  local gb=${1:-0}
+  if [[ "$gb" =~ ^[0-9]+$ && "$gb" -gt 0 ]]; then
+    echo $((gb * 1024 * 1024 * 1024))
+  else
+    echo 0
+  fi
+}
+
+mark_limited() {
+  touch "$CONF/$1.limited"
+}
+
+clear_limited() {
+  rm -f "$CONF/$1.limited"
+}
+
+is_limited() {
+  [[ -f "$CONF/$1.limited" ]]
 }
 
 host_prefix() {
@@ -156,6 +189,7 @@ upgrade_version() {
   echo "开始升级/重装 Snell v$v ..."
   install_bin "$v" 1
   write_unit
+  write_limit_timer
   restart_version "$v"
   echo "Snell v$v 已升级，并已重启该版本所有实例。"
 }
@@ -182,6 +216,53 @@ EOF
   systemctl daemon-reload
 }
 
+write_limit_timer() {
+  cat > "$LIMIT_SERVICE" <<EOF
+[Unit]
+Description=Snell traffic limit check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snell check-limits
+EOF
+
+  cat > "$LIMIT_TIMER" <<EOF
+[Unit]
+Description=Run Snell traffic limit check every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now snell-limit-check.timer >/dev/null 2>&1 || true
+}
+
+check_limits() {
+  local e name used limit
+  for e in "$CONF"/*.env; do
+    [[ -e "$e" ]] || continue
+    VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+    name=$(basename "$e" .env)
+    # shellcheck disable=SC1090
+    . "$e"
+    limit=$(limit_bytes "${LIMIT_GB:-0}")
+    [[ "$limit" -gt 0 ]] || continue
+    used=$(used_bytes "$name")
+    if [[ "$used" -ge "$limit" ]]; then
+      systemctl stop "snell@$name" >/dev/null 2>&1 || true
+      mark_limited "$name"
+      echo "$name 已超过流量上限 $(traffic_limit_text "$LIMIT_GB")，已自动停用。"
+    fi
+  done
+}
+
 add_instance() {
   local v name port psk obfs limit_gb server_ip
   read -rp "选择版本 [4/5/6] 默认 5: " v
@@ -199,6 +280,7 @@ add_instance() {
 
   install_bin "$v"
   write_unit
+  write_limit_timer
 
   cat > "$CONF/$name.conf" <<EOF
 [snell-server]
@@ -217,6 +299,7 @@ LIMIT_GB=$limit_gb
 EOF
 
   chmod 600 "$CONF/$name.conf" "$CONF/$name.env"
+  clear_limited "$name"
   systemctl enable --now "snell@$name"
   server_ip=$(public_ip)
   echo
@@ -247,14 +330,14 @@ list_instances() {
   for e in "$CONF"/*.env; do
     [[ -e "$e" ]] || continue
     name=$(basename "$e" .env)
+    VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
     # shellcheck disable=SC1090
     . "$e"
     state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
-    rx=$(systemctl show "snell@$name" -p IPIngressBytes --value 2>/dev/null || echo 0)
-    tx=$(systemctl show "snell@$name" -p IPEgressBytes --value 2>/dev/null || echo 0)
-    rx=$(num_or_zero "$rx")
-    tx=$(num_or_zero "$tx")
-    used=$(( ${rx:-0} + ${tx:-0} ))
+    used=$(used_bytes "$name")
+    if is_limited "$name"; then
+      state="limited"
+    fi
     printf "%-22s v%-5s %-8s %-12s %-14s %-12s\n" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")"
   done
 }
@@ -265,17 +348,32 @@ service_menu() {
   read -rp "实例名: " name
   [[ -n "$name" ]] || { echo "实例名不能为空"; return; }
   case "$op" in
-    start|stop|restart|status) systemctl "$op" "snell@$name" ;;
+    start)
+      clear_limited "$name"
+      systemctl start "snell@$name"
+      ;;
+    restart)
+      clear_limited "$name"
+      systemctl restart "snell@$name"
+      ;;
+    stop|status) systemctl "$op" "snell@$name" ;;
     logs) journalctl -u "snell@$name" -f ;;
     remove)
       systemctl disable --now "snell@$name" || true
-      rm -f "$CONF/$name.conf" "$CONF/$name.env"
+      rm -f "$CONF/$name.conf" "$CONF/$name.env" "$CONF/$name.limited"
       systemctl daemon-reload
       echo "已删除 $name"
       ;;
     *) echo "未知操作" ;;
   esac
 }
+
+if [[ "${1:-}" == "check-limits" ]]; then
+  check_limits
+  exit 0
+fi
+
+write_limit_timer
 
 while true; do
   echo

@@ -38,6 +38,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - obfs 默认 `tls`
 - 可设置流量上限，单位 GB，留空为不限
 - 安装完成后会输出可直接复制的 Surge 节点配置和服务端配置
+- 设置流量上限后，系统会每 5 分钟检查一次，超过上限自动停用对应实例
 
 ## 支持版本
 
@@ -51,4 +52,5 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - 配置目录：`/etc/snell-multi`
 - 二进制目录：`/opt/snell-multi/bin`
 - 流量显示优先使用 systemd `IPAccounting=true`，列表为中文并显示已用流量和流量上限。
+- 自动停用依赖 `snell-limit-check.timer`，每 5 分钟检查一次。
 - 记得在云厂商安全组或防火墙放行实例端口。
