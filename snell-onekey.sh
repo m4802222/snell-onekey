@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-[[ $EUID -eq 0 ]] || { echo "请用 root 运行"; exit 1; }
+if [[ $EUID -ne 0 ]]; then
+  command -v sudo >/dev/null || { echo "请用 root 运行，或先安装 sudo"; exit 1; }
+  exec sudo "$0" "$@"
+fi
 
 BASE=/opt/snell-multi
 CONF=/etc/snell-multi
