@@ -123,18 +123,33 @@ fix_obfs_for_instance() {
   fi
 }
 
+fix_listen_for_instance() {
+  local name=$1 conf="$CONF/$1.conf"
+  [[ -f "$conf" ]] || return 0
+  if grep -qE '^[[:space:]]*listen[[:space:]]*=[[:space:]]*::0:' "$conf"; then
+    sed -i.bak 's/^\([[:space:]]*listen[[:space:]]*=[[:space:]]*\)::0:/\10.0.0.0:/' "$conf"
+    rm -f "$conf.bak"
+    echo "$name: 已修复监听地址为 0.0.0.0"
+  fi
+}
+
+fix_instance() {
+  fix_obfs_for_instance "$1"
+  fix_listen_for_instance "$1"
+}
+
 fix_all_obfs() {
   local e name
   for e in "$CONF"/*.env; do
     [[ -e "$e" ]] || continue
     name=$(basename "$e" .env)
-    fix_obfs_for_instance "$name"
+    fix_instance "$name"
   done
 }
 
 print_client_config() {
   local name=$1 server_ip
-  fix_obfs_for_instance "$name"
+  fix_instance "$name"
   VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
   # shellcheck disable=SC1090
   . "$CONF/$name.env"
@@ -261,7 +276,7 @@ restart_version() {
     [[ -e "$e" ]] || continue
     VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
     name=$(basename "$e" .env)
-    fix_obfs_for_instance "$name"
+    fix_instance "$name"
     # shellcheck disable=SC1090
     . "$e"
     [[ "${VER:-}" == "$v" ]] || continue
@@ -289,7 +304,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=$CONF/%i.env
-ExecStart=$BASE/bin/snell-server-v\${VER} -c $CONF/%i.conf
+ExecStart=/bin/sh -c 'exec $BASE/bin/snell-server-v\${VER} -c $CONF/%i.conf'
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=1048576
@@ -335,7 +350,7 @@ check_limits() {
     [[ -e "$e" ]] || continue
     VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
     name=$(basename "$e" .env)
-    fix_obfs_for_instance "$name"
+    fix_instance "$name"
     # shellcheck disable=SC1090
     . "$e"
     limit=$(limit_bytes "${LIMIT_GB:-0}")
@@ -375,7 +390,7 @@ add_instance() {
 
   cat > "$CONF/$name.conf" <<EOF
 [snell-server]
-listen = ::0:$port
+listen = 0.0.0.0:$port
 psk = $psk
 reuse = true
 EOF
@@ -405,7 +420,7 @@ list_instances() {
       [[ -e "$e" ]] || continue
       name=$(basename "$e" .env)
       VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
-      fix_obfs_for_instance "$name"
+      fix_instance "$name"
       # shellcheck disable=SC1090
       . "$e"
       state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
@@ -422,6 +437,45 @@ list_instances() {
       cat
     fi
   }
+}
+
+diagnose_instance() {
+  local name=$1 state listen server_ip
+  fix_instance "$name"
+  VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+  # shellcheck disable=SC1090
+  . "$CONF/$name.env"
+  open_port "$PORT"
+  systemctl restart "snell@$name" >/dev/null 2>&1 || true
+  sleep 1
+  state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
+  server_ip=$(public_ip)
+  echo
+  echo "===== 检测结果 ====="
+  echo "实例: $name"
+  echo "状态: $(state_text "$state")"
+  echo "服务器: $server_ip"
+  echo "端口: $PORT"
+  echo
+  echo "客户端配置："
+  print_client_config "$name"
+  echo
+  echo "监听检查："
+  if command -v ss >/dev/null 2>&1; then
+    listen=$(ss -ltnp 2>/dev/null | grep ":$PORT " || true)
+  else
+    listen=$(netstat -ltnp 2>/dev/null | grep ":$PORT " || true)
+  fi
+  if [[ -n "$listen" ]]; then
+    echo "$listen"
+  else
+    echo "未检测到端口监听，请看下面日志。"
+  fi
+  echo
+  echo "最近日志："
+  journalctl -u "snell@$name" -n 20 --no-pager || true
+  echo
+  echo "提示: 如果状态正常且端口已监听但仍测速失败，请确认云厂商安全组已放行 TCP $PORT。"
 }
 
 service_menu() {
@@ -455,6 +509,7 @@ service_menu() {
   echo "6. 删除"
   echo "7. 复制配置"
   echo "8. 修复配置"
+  echo "9. 检测连接"
   echo "0. 返回"
   read -rp "请选择，默认 4: " op
   op=${op:-4}
@@ -496,12 +551,13 @@ service_menu() {
       ;;
     7) print_client_config "$name" ;;
     8)
-      fix_obfs_for_instance "$name"
+      fix_instance "$name"
       systemctl restart "snell@$name"
       echo "已修复并重启 $name"
       echo "复制配置："
       print_client_config "$name"
       ;;
+    9) diagnose_instance "$name" ;;
     0) return ;;
     *) echo "未知操作" ;;
   esac
@@ -514,6 +570,7 @@ if [[ "${1:-}" == "check-limits" ]]; then
 fi
 
 fix_all_obfs
+write_unit
 write_limit_timer
 
 while true; do
