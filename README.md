@@ -39,7 +39,9 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - 可设置流量上限，单位 GB，留空为不限
 - 安装完成后只输出可直接复制的 Surge 节点配置
 - 设置流量上限后，系统会每 5 分钟检查一次，超过上限自动停用对应实例
+- 流量会累计保存到 `/var/lib/snell-multi`，服务重启后不会从 0 重新算
 - 生成配置时会自动放行本机防火墙端口；流量用完自动停止实例并关闭本机端口
+- 已超限实例不能手动启动、重启、检测连接或升级重启，避免停用后又被拉起
 - 旧 v4/v5 实例如果误写了 `obfs=tls`，脚本会自动修复；菜单里也可选择“修复配置”和“复制配置”
 
 ## 支持版本
@@ -55,6 +57,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - 实例操作支持启动、停止、重启、状态、日志、删除、复制配置、修复配置和检测连接。
 - 配置目录：`/etc/snell-multi`
 - 二进制目录：`/opt/snell-multi/bin`
-- 流量显示优先使用 systemd `IPAccounting=true`，列表为中文并显示已用流量和流量上限。
+- 累计流量目录：`/var/lib/snell-multi`
+- 流量显示基于 systemd `IPAccounting=true` 并做本地累计保存，列表为中文并显示已用流量和流量上限。
 - 自动停用依赖 `snell-limit-check.timer`，每 5 分钟检查一次。
 - 脚本会尝试处理本机 `ufw`、`firewalld` 或 `iptables` 端口；云厂商安全组仍需你在控制台单独配置。

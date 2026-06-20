@@ -8,10 +8,11 @@ fi
 
 BASE=/opt/snell-multi
 CONF=/etc/snell-multi
+STATE=/var/lib/snell-multi
 UNIT=/etc/systemd/system/snell@.service
 LIMIT_SERVICE=/etc/systemd/system/snell-limit-check.service
 LIMIT_TIMER=/etc/systemd/system/snell-limit-check.timer
-mkdir -p "$BASE/bin" "$CONF"
+mkdir -p "$BASE/bin" "$CONF" "$STATE"
 
 arch() {
   case "$(uname -m)" in
@@ -75,13 +76,54 @@ state_text() {
   esac
 }
 
-used_bytes() {
+current_bytes() {
   local name=$1 rx tx
   rx=$(systemctl show "snell@$name" -p IPIngressBytes --value 2>/dev/null || echo 0)
   tx=$(systemctl show "snell@$name" -p IPEgressBytes --value 2>/dev/null || echo 0)
   rx=$(num_or_zero "$rx")
   tx=$(num_or_zero "$tx")
   echo $((rx + tx))
+}
+
+state_num() {
+  local file=$1 value=0
+  [[ -f "$file" ]] && read -r value < "$file" || true
+  num_or_zero "$value"
+}
+
+used_bytes() {
+  local name=$1 current last total
+  mkdir -p "$STATE"
+  current=$(current_bytes "$name")
+  last=$(state_num "$STATE/$name.last")
+  total=$(state_num "$STATE/$name.total")
+  if [[ "$current" -ge "$last" ]]; then
+    total=$((total + current - last))
+  else
+    total=$((total + current))
+  fi
+  printf '%s\n' "$total" > "$STATE/$name.total"
+  printf '%s\n' "$current" > "$STATE/$name.last"
+  echo "$total"
+}
+
+reset_usage() {
+  local name=$1 current
+  mkdir -p "$STATE"
+  current=$(current_bytes "$name")
+  printf '0\n' > "$STATE/$name.total"
+  printf '%s\n' "$current" > "$STATE/$name.last"
+  clear_limited "$name"
+}
+
+ensure_usage_at_least() {
+  local name=$1 min_bytes=$2 total current
+  mkdir -p "$STATE"
+  total=$(state_num "$STATE/$name.total")
+  [[ "$total" -ge "$min_bytes" ]] && return 0
+  current=$(current_bytes "$name")
+  printf '%s\n' "$min_bytes" > "$STATE/$name.total"
+  printf '%s\n' "$current" > "$STATE/$name.last"
 }
 
 limit_bytes() {
@@ -103,6 +145,36 @@ clear_limited() {
 
 is_limited() {
   [[ -f "$CONF/$1.limited" ]]
+}
+
+enforce_limit() {
+  local name=$1 quiet=${2:-0} used limit
+  load_instance "$name" >/dev/null || return 1
+  limit=$(limit_bytes "${LIMIT_GB:-0}")
+  if is_limited "$name"; then
+    if [[ "$limit" -gt 0 ]]; then
+      ensure_usage_at_least "$name" "$limit"
+    else
+      clear_limited "$name"
+      return 1
+    fi
+    systemctl stop "snell@$name" >/dev/null 2>&1 || true
+    close_port "$PORT"
+    return 0
+  fi
+  [[ "$limit" -gt 0 ]] || { clear_limited "$name"; return 1; }
+  used=$(used_bytes "$name")
+  if [[ "$used" -ge "$limit" ]]; then
+    systemctl stop "snell@$name" >/dev/null 2>&1 || true
+    close_port "$PORT"
+    if ! is_limited "$name" && [[ "$quiet" != 1 ]]; then
+      echo "$name 已超过流量上限 $(traffic_limit_text "$LIMIT_GB")，已自动停用。"
+    fi
+    mark_limited "$name"
+    return 0
+  fi
+  clear_limited "$name"
+  return 1
 }
 
 fix_obfs_for_instance() {
@@ -165,8 +237,9 @@ load_instance() {
 
 instance_state() {
   local name=$1 state
+  enforce_limit "$name" 1 >/dev/null 2>&1 || true
   state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
-  if is_limited "$name"; then
+  if is_limited "$name" && [[ "$state" != active && "$state" != activating ]]; then
     state="limited"
   fi
   echo "$state"
@@ -207,12 +280,35 @@ select_instance() {
   echo "${names[$((choice - 1))]}"
 }
 
+assert_can_run() {
+  local name=$1 action=$2 used limit
+  load_instance "$name" >/dev/null || return 1
+  if is_limited "$name"; then
+    systemctl stop "snell@$name" >/dev/null 2>&1 || true
+    close_port "$PORT"
+    echo "该实例已超限停用，不能${action}。"
+    echo "需要继续使用请删除后重建，或修改上限后再启动。"
+    return 1
+  fi
+  limit=$(limit_bytes "${LIMIT_GB:-0}")
+  used=$(used_bytes "$name")
+  if [[ "$limit" -gt 0 && "$used" -ge "$limit" ]]; then
+    systemctl stop "snell@$name" >/dev/null 2>&1 || true
+    close_port "$PORT"
+    mark_limited "$name"
+    echo "已超过流量上限 $(human_bytes "$used")/$(traffic_limit_text "$LIMIT_GB")，不能${action}。"
+    echo "需要继续使用请删除后重建，或修改上限后再启动。"
+    return 1
+  fi
+  clear_limited "$name"
+}
+
 run_instance_action() {
   local name=$1 op=$2
   case "$op" in
     1)
-      clear_limited "$name"
       load_instance "$name" >/dev/null || return 1
+      assert_can_run "$name" "启动" || return 1
       open_port "$PORT"
       systemctl start "snell@$name"
       ;;
@@ -222,24 +318,29 @@ run_instance_action() {
       close_port "$PORT"
       ;;
     3)
-      clear_limited "$name"
       load_instance "$name" >/dev/null || return 1
+      assert_can_run "$name" "重启" || return 1
       open_port "$PORT"
       systemctl restart "snell@$name"
       ;;
-    4) systemctl status "snell@$name" --no-pager ;;
+    4)
+      enforce_limit "$name" 0 >/dev/null 2>&1 || true
+      systemctl status "snell@$name" --no-pager
+      ;;
     5) journalctl -u "snell@$name" -f ;;
     6)
       load_instance "$name" >/dev/null || return 1
       systemctl disable --now "snell@$name" || true
       close_port "$PORT"
       rm -f "$CONF/$name.conf" "$CONF/$name.env" "$CONF/$name.limited"
+      rm -f "$STATE/$name.total" "$STATE/$name.last"
       systemctl daemon-reload
       echo "已删除 $name"
       ;;
     7) print_client_config "$name" ;;
     8)
       fix_instance "$name"
+      assert_can_run "$name" "重启" || return 1
       systemctl restart "snell@$name"
       echo "已修复并重启 $name"
       echo "复制配置："
@@ -382,6 +483,7 @@ restart_version() {
     # shellcheck disable=SC1090
     . "$e"
     [[ "${VER:-}" == "$v" ]] || continue
+    enforce_limit "$name" 1 >/dev/null 2>&1 && continue
     systemctl restart "snell@$name" || true
   done
 }
@@ -447,23 +549,13 @@ EOF
 }
 
 check_limits() {
-  local e name used limit
+  local e name
   for e in "$CONF"/*.env; do
     [[ -e "$e" ]] || continue
     VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
     name=$(basename "$e" .env)
     fix_instance "$name"
-    # shellcheck disable=SC1090
-    . "$e"
-    limit=$(limit_bytes "${LIMIT_GB:-0}")
-    [[ "$limit" -gt 0 ]] || continue
-    used=$(used_bytes "$name")
-    if [[ "$used" -ge "$limit" ]]; then
-      systemctl stop "snell@$name" >/dev/null 2>&1 || true
-      close_port "$PORT"
-      mark_limited "$name"
-      echo "$name 已超过流量上限 $(traffic_limit_text "$LIMIT_GB")，已自动停用。"
-    fi
+    enforce_limit "$name" 0 || true
   done
 }
 
@@ -507,6 +599,7 @@ LIMIT_GB=$limit_gb
 EOF
 
   chmod 600 "$CONF/$name.conf" "$CONF/$name.env"
+  reset_usage "$name"
   clear_limited "$name"
   open_port "$port"
   systemctl enable --now "snell@$name"
@@ -539,6 +632,7 @@ diagnose_instance() {
   local name=$1 state listen server_ip
   fix_instance "$name"
   load_instance "$name" >/dev/null || return 1
+  assert_can_run "$name" "检测连接" || return 1
   open_port "$PORT"
   systemctl restart "snell@$name" >/dev/null 2>&1 || true
   sleep 1
