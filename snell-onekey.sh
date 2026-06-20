@@ -138,7 +138,7 @@ fix_instance() {
   fix_listen_for_instance "$1"
 }
 
-fix_all_obfs() {
+repair_all_instances() {
   local e name
   for e in "$CONF"/*.env; do
     [[ -e "$e" ]] || continue
@@ -147,12 +147,114 @@ fix_all_obfs() {
   done
 }
 
+instance_names() {
+  local e
+  for e in "$CONF"/*.env; do
+    [[ -e "$e" ]] || continue
+    basename "$e" .env
+  done | sort
+}
+
+load_instance() {
+  local name=$1
+  VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+  [[ -f "$CONF/$name.env" ]] || { echo "实例不存在: $name"; return 1; }
+  # shellcheck disable=SC1090
+  . "$CONF/$name.env"
+}
+
+instance_state() {
+  local name=$1 state
+  state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
+  if is_limited "$name"; then
+    state="limited"
+  fi
+  echo "$state"
+}
+
+instance_summary() {
+  local name=$1 state used
+  load_instance "$name" >/dev/null || return 1
+  state=$(instance_state "$name")
+  used=$(used_bytes "$name")
+  printf "%s  v%s  %s  %s  %s/%s" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")"
+}
+
+choose_number() {
+  local prompt=$1 default=$2 max=$3 choice
+  read -rp "$prompt" choice
+  choice=${choice:-$default}
+  [[ "$choice" =~ ^[0-9]+$ ]] || { echo "选择错误" >&2; return 1; }
+  [[ "$choice" -ge 0 && "$choice" -le "$max" ]] || { echo "选择错误" >&2; return 1; }
+  echo "$choice"
+}
+
+select_instance() {
+  local names=() name i choice
+  while IFS= read -r name; do
+    names+=("$name")
+  done < <(instance_names)
+  [[ "${#names[@]}" -gt 0 ]] || { echo "暂无实例" >&2; return 1; }
+
+  echo >&2
+  echo "选择实例：" >&2
+  for i in "${!names[@]}"; do
+    printf "%s. %s\n" "$((i + 1))" "$(instance_summary "${names[$i]}")" >&2
+  done
+  echo "0. 返回" >&2
+  choice=$(choose_number "请选择，默认 1: " 1 "${#names[@]}") || return 1
+  [[ "$choice" -eq 0 ]] && return 1
+  echo "${names[$((choice - 1))]}"
+}
+
+run_instance_action() {
+  local name=$1 op=$2
+  case "$op" in
+    1)
+      clear_limited "$name"
+      load_instance "$name" >/dev/null || return 1
+      open_port "$PORT"
+      systemctl start "snell@$name"
+      ;;
+    2)
+      load_instance "$name" >/dev/null || return 1
+      systemctl stop "snell@$name"
+      close_port "$PORT"
+      ;;
+    3)
+      clear_limited "$name"
+      load_instance "$name" >/dev/null || return 1
+      open_port "$PORT"
+      systemctl restart "snell@$name"
+      ;;
+    4) systemctl status "snell@$name" --no-pager ;;
+    5) journalctl -u "snell@$name" -f ;;
+    6)
+      load_instance "$name" >/dev/null || return 1
+      systemctl disable --now "snell@$name" || true
+      close_port "$PORT"
+      rm -f "$CONF/$name.conf" "$CONF/$name.env" "$CONF/$name.limited"
+      systemctl daemon-reload
+      echo "已删除 $name"
+      ;;
+    7) print_client_config "$name" ;;
+    8)
+      fix_instance "$name"
+      systemctl restart "snell@$name"
+      echo "已修复并重启 $name"
+      echo "复制配置："
+      print_client_config "$name"
+      ;;
+    9) diagnose_instance "$name" ;;
+    0) return 0 ;;
+    *) echo "未知操作" ;;
+  esac
+}
+
 print_client_config() {
   local name=$1 server_ip
   fix_instance "$name"
-  VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
-  # shellcheck disable=SC1090
-  . "$CONF/$name.env"
+  load_instance "$name" >/dev/null || return 1
   server_ip=$(public_ip)
   if [[ "${OBFS:-off}" == off ]]; then
     echo "${name} = snell, ${server_ip}, ${PORT}, psk=${PSK}, version=${VER}"
@@ -416,20 +518,14 @@ EOF
 list_instances() {
   {
     printf "实例名称\t版本\t端口\t状态\t已用流量\t流量上限\n"
-    for e in "$CONF"/*.env; do
-      [[ -e "$e" ]] || continue
-      name=$(basename "$e" .env)
-      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
       fix_instance "$name"
-      # shellcheck disable=SC1090
-      . "$e"
-      state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
+      load_instance "$name" >/dev/null || continue
+      state=$(instance_state "$name")
       used=$(used_bytes "$name")
-      if is_limited "$name"; then
-        state="limited"
-      fi
       printf "%s\tv%s\t%s\t%s\t%s\t%s\n" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")"
-    done
+    done < <(instance_names)
   } | {
     if command -v column >/dev/null 2>&1; then
       column -t -s $'\t'
@@ -442,9 +538,7 @@ list_instances() {
 diagnose_instance() {
   local name=$1 state listen server_ip
   fix_instance "$name"
-  VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
-  # shellcheck disable=SC1090
-  . "$CONF/$name.env"
+  load_instance "$name" >/dev/null || return 1
   open_port "$PORT"
   systemctl restart "snell@$name" >/dev/null 2>&1 || true
   sleep 1
@@ -479,25 +573,8 @@ diagnose_instance() {
 }
 
 service_menu() {
-  local names=() e i choice name op
-  for e in "$CONF"/*.env; do
-    [[ -e "$e" ]] || continue
-    names+=("$(basename "$e" .env)")
-  done
-  [[ "${#names[@]}" -gt 0 ]] || { echo "暂无实例"; return; }
-
-  echo
-  echo "选择实例："
-  for i in "${!names[@]}"; do
-    printf "%s. %s\n" "$((i + 1))" "${names[$i]}"
-  done
-  echo "0. 返回"
-  read -rp "请选择，默认 1: " choice
-  choice=${choice:-1}
-  [[ "$choice" =~ ^[0-9]+$ ]] || { echo "选择错误"; return; }
-  [[ "$choice" -eq 0 ]] && return
-  [[ "$choice" -ge 1 && "$choice" -le "${#names[@]}" ]] || { echo "选择错误"; return; }
-  name="${names[$((choice - 1))]}"
+  local name op
+  name=$(select_instance) || return
 
   echo
   echo "选择操作："
@@ -511,65 +588,17 @@ service_menu() {
   echo "8. 修复配置"
   echo "9. 检测连接"
   echo "0. 返回"
-  read -rp "请选择，默认 4: " op
-  op=${op:-4}
-  case "$op" in
-    1)
-      clear_limited "$name"
-      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
-      # shellcheck disable=SC1090
-      . "$CONF/$name.env"
-      open_port "$PORT"
-      systemctl start "snell@$name"
-      ;;
-    2)
-      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
-      # shellcheck disable=SC1090
-      . "$CONF/$name.env"
-      systemctl stop "snell@$name"
-      close_port "$PORT"
-      ;;
-    3)
-      clear_limited "$name"
-      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
-      # shellcheck disable=SC1090
-      . "$CONF/$name.env"
-      open_port "$PORT"
-      systemctl restart "snell@$name"
-      ;;
-    4) systemctl status "snell@$name" --no-pager ;;
-    5) journalctl -u "snell@$name" -f ;;
-    6)
-      VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
-      # shellcheck disable=SC1090
-      . "$CONF/$name.env"
-      systemctl disable --now "snell@$name" || true
-      close_port "$PORT"
-      rm -f "$CONF/$name.conf" "$CONF/$name.env" "$CONF/$name.limited"
-      systemctl daemon-reload
-      echo "已删除 $name"
-      ;;
-    7) print_client_config "$name" ;;
-    8)
-      fix_instance "$name"
-      systemctl restart "snell@$name"
-      echo "已修复并重启 $name"
-      echo "复制配置："
-      print_client_config "$name"
-      ;;
-    9) diagnose_instance "$name" ;;
-    0) return ;;
-    *) echo "未知操作" ;;
-  esac
+  op=$(choose_number "请选择，默认 4: " 4 9) || return
+  run_instance_action "$name" "$op"
 }
 
 if [[ "${1:-}" == "check-limits" ]]; then
-  fix_all_obfs
+  repair_all_instances
   check_limits
   exit 0
 fi
 
-fix_all_obfs
+repair_all_instances
 write_unit
 write_limit_timer
 
@@ -581,8 +610,7 @@ while true; do
   echo "3. 启停/日志/删除"
   echo "4. 一键升级全部版本"
   echo "0. 退出"
-  read -rp "请选择，默认 1: " n
-  n=${n:-1}
+  n=$(choose_number "请选择，默认 1: " 1 4) || continue
   case "$n" in
     1) add_instance ;;
     2) list_instances ;;

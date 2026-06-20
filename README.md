@@ -37,7 +37,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - PSK 自动生成
 - obfs 默认关闭；v4/v5 不输出 `obfs=tls`
 - 可设置流量上限，单位 GB，留空为不限
-- 安装完成后会输出可直接复制的 Surge 节点配置和服务端配置
+- 安装完成后只输出可直接复制的 Surge 节点配置
 - 设置流量上限后，系统会每 5 分钟检查一次，超过上限自动停用对应实例
 - 生成配置时会自动放行本机防火墙端口；流量用完自动停止实例并关闭本机端口
 - 旧 v4/v5 实例如果误写了 `obfs=tls`，脚本会自动修复；菜单里也可选择“修复配置”和“复制配置”
@@ -51,6 +51,8 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 ## 说明
 
 - 每个实例都是独立的 `snell@实例名` systemd 服务。
+- 实例选择菜单会显示实例名、版本、端口、状态、已用流量和上限，方便直接选择。
+- 实例操作支持启动、停止、重启、状态、日志、删除、复制配置、修复配置和检测连接。
 - 配置目录：`/etc/snell-multi`
 - 二进制目录：`/opt/snell-multi/bin`
 - 流量显示优先使用 systemd `IPAccounting=true`，列表为中文并显示已用流量和流量上限。
