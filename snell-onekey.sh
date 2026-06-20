@@ -76,6 +76,99 @@ state_text() {
   esac
 }
 
+now_epoch() { date +%s; }
+
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || now_epoch
+}
+
+set_env_value() {
+  local name=$1 key=$2 value=$3 env="$CONF/$1.env"
+  if grep -q "^${key}=" "$env" 2>/dev/null; then
+    sed -i.bak "s/^${key}=.*/${key}=${value}/" "$env"
+    rm -f "$env.bak"
+  else
+    echo "${key}=${value}" >> "$env"
+  fi
+}
+
+month_epoch() {
+  local start=$1 months=$2 y m d h mi s total ty tm last_day result
+  y=$(date -d "@$start" +%Y 2>/dev/null || true)
+  m=$(date -d "@$start" +%m 2>/dev/null || true)
+  d=$(date -d "@$start" +%d 2>/dev/null || true)
+  h=$(date -d "@$start" +%H 2>/dev/null || true)
+  mi=$(date -d "@$start" +%M 2>/dev/null || true)
+  s=$(date -d "@$start" +%S 2>/dev/null || true)
+  if [[ ! "$y$m$d$h$mi$s" =~ ^[0-9]+$ ]]; then
+    echo $((start + months * 30 * 86400))
+    return
+  fi
+  total=$((10#$m - 1 + months))
+  ty=$((10#$y + total / 12))
+  tm=$((total % 12 + 1))
+  last_day=$(date -d "$(printf '%04d-%02d-01 +1 month -1 day' "$ty" "$tm")" +%d 2>/dev/null || echo "$d")
+  if [[ "$((10#$d))" -gt "$((10#$last_day))" ]]; then
+    d=$last_day
+  fi
+  result=$(date -d "$(printf '%04d-%02d-%02d %02d:%02d:%02d' "$ty" "$tm" "$((10#$d))" "$((10#$h))" "$((10#$mi))" "$((10#$s))")" +%s 2>/dev/null || true)
+  if [[ "$result" =~ ^[0-9]+$ ]]; then
+    echo "$result"
+  else
+    echo $((start + months * 30 * 86400))
+  fi
+}
+
+cycle_start_epoch() {
+  local start=$1 now=${2:-$(now_epoch)} prev next i=1
+  prev=$start
+  if [[ "$start" -gt "$now" ]]; then
+    echo "$start"
+    return
+  fi
+  while true; do
+    next=$(month_epoch "$start" "$i")
+    if [[ "$next" -gt "$now" ]]; then
+      echo "$prev"
+      return
+    fi
+    prev=$next
+    i=$((i + 1))
+  done
+}
+
+next_reset_epoch() {
+  local start=$1 now=${2:-$(now_epoch)} next i=1
+  if [[ "$start" -gt "$now" ]]; then
+    echo "$start"
+    return
+  fi
+  while true; do
+    next=$(month_epoch "$start" "$i")
+    if [[ "$next" -gt "$now" ]]; then
+      echo "$next"
+      return
+    fi
+    i=$((i + 1))
+  done
+}
+
+remaining_time_text() {
+  local limit_gb=${1:-0} start=${2:-0} now next diff days
+  if ! [[ "$limit_gb" =~ ^[0-9]+$ ]] || [[ "$limit_gb" -le 0 ]]; then
+    echo "不限"
+    return
+  fi
+  start=$(num_or_zero "$start")
+  [[ "$start" -gt 0 ]] || start=$(now_epoch)
+  now=$(now_epoch)
+  next=$(next_reset_epoch "$start" "$now")
+  diff=$((next - now))
+  [[ "$diff" -gt 0 ]] || { echo "<1天"; return; }
+  days=$(((diff + 86399) / 86400))
+  echo "${days}天"
+}
+
 current_bytes() {
   local name=$1 rx tx
   rx=$(systemctl show "snell@$name" -p IPIngressBytes --value 2>/dev/null || echo 0)
@@ -147,9 +240,48 @@ is_limited() {
   [[ -f "$CONF/$1.limited" ]]
 }
 
+ensure_billing_start() {
+  local name=$1 fallback start
+  start=$(num_or_zero "${BILLING_START:-0}")
+  [[ "$start" -gt 0 ]] && return 0
+  fallback=$(file_mtime "$CONF/$name.env")
+  set_env_value "$name" "BILLING_START" "$fallback"
+  BILLING_START=$fallback
+}
+
+reset_cycle_if_due() {
+  local name=$1 now start cycle marker active_before=0 was_limited=0
+  load_instance "$name" >/dev/null || return 1
+  ensure_billing_start "$name"
+  now=$(now_epoch)
+  start=$(cycle_start_epoch "$BILLING_START" "$now")
+  marker=$(state_num "$STATE/$name.cycle")
+  if [[ "$marker" -eq 0 ]]; then
+    printf '%s\n' "$start" > "$STATE/$name.cycle"
+    return 1
+  fi
+  [[ "$marker" -eq "$start" ]] && return 1
+
+  systemctl is-active --quiet "snell@$name" 2>/dev/null && active_before=1
+  is_limited "$name" && was_limited=1
+  reset_usage "$name"
+  printf '%s\n' "$start" > "$STATE/$name.cycle"
+  if [[ "$active_before" -eq 1 || "$was_limited" -eq 1 ]]; then
+    clear_limited "$name"
+    load_instance "$name" >/dev/null || return 0
+    open_port "$PORT"
+    systemctl start "snell@$name" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 enforce_limit() {
   local name=$1 quiet=${2:-0} used limit
   load_instance "$name" >/dev/null || return 1
+  ensure_billing_start "$name"
+  reset_cycle_if_due "$name" >/dev/null 2>&1 || true
+  load_instance "$name" >/dev/null || return 1
+  ensure_billing_start "$name"
   limit=$(limit_bytes "${LIMIT_GB:-0}")
   if is_limited "$name"; then
     if [[ "$limit" -gt 0 ]]; then
@@ -229,10 +361,11 @@ instance_names() {
 
 load_instance() {
   local name=$1
-  VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+  VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0 BILLING_START=0
   [[ -f "$CONF/$name.env" ]] || { echo "实例不存在: $name"; return 1; }
   # shellcheck disable=SC1090
   . "$CONF/$name.env"
+  ensure_billing_start "$name"
 }
 
 instance_state() {
@@ -250,7 +383,7 @@ instance_summary() {
   load_instance "$name" >/dev/null || return 1
   state=$(instance_state "$name")
   used=$(used_bytes "$name")
-  printf "%s  v%s  %s  %s  %s/%s" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")"
+  printf "%s  v%s  %s  %s  %s/%s  %s" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")" "$(remaining_time_text "${LIMIT_GB:-0}" "${BILLING_START:-0}")"
 }
 
 choose_number() {
@@ -283,11 +416,13 @@ select_instance() {
 assert_can_run() {
   local name=$1 action=$2 used limit
   load_instance "$name" >/dev/null || return 1
+  reset_cycle_if_due "$name" >/dev/null 2>&1 || true
+  load_instance "$name" >/dev/null || return 1
   if is_limited "$name"; then
     systemctl stop "snell@$name" >/dev/null 2>&1 || true
     close_port "$PORT"
     echo "该实例已超限停用，不能${action}。"
-    echo "需要继续使用请删除后重建，或修改上限后再启动。"
+    echo "下个计费周期会自动清零并重新启动。"
     return 1
   fi
   limit=$(limit_bytes "${LIMIT_GB:-0}")
@@ -297,7 +432,7 @@ assert_can_run() {
     close_port "$PORT"
     mark_limited "$name"
     echo "已超过流量上限 $(human_bytes "$used")/$(traffic_limit_text "$LIMIT_GB")，不能${action}。"
-    echo "需要继续使用请删除后重建，或修改上限后再启动。"
+    echo "下个计费周期会自动清零并重新启动。"
     return 1
   fi
   clear_limited "$name"
@@ -333,7 +468,7 @@ run_instance_action() {
       systemctl disable --now "snell@$name" || true
       close_port "$PORT"
       rm -f "$CONF/$name.conf" "$CONF/$name.env" "$CONF/$name.limited"
-      rm -f "$STATE/$name.total" "$STATE/$name.last"
+      rm -f "$STATE/$name.total" "$STATE/$name.last" "$STATE/$name.cycle"
       systemctl daemon-reload
       echo "已删除 $name"
       ;;
@@ -477,7 +612,7 @@ restart_version() {
   local v=$1 e name
   for e in "$CONF"/*.env; do
     [[ -e "$e" ]] || continue
-    VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0
+    VER="" PORT="" PSK="" OBFS="" LIMIT_GB=0 BILLING_START=0
     name=$(basename "$e" .env)
     fix_instance "$name"
     # shellcheck disable=SC1090
@@ -532,12 +667,12 @@ EOF
 
   cat > "$LIMIT_TIMER" <<EOF
 [Unit]
-Description=Run Snell traffic limit check every 5 minutes
+Description=Run Snell traffic limit check every 1 minute
 
 [Timer]
 OnBootSec=1min
-OnUnitActiveSec=5min
-AccuracySec=30s
+OnUnitActiveSec=1min
+AccuracySec=10s
 Persistent=true
 
 [Install]
@@ -560,7 +695,7 @@ check_limits() {
 }
 
 add_instance() {
-  local v name port psk obfs limit_gb
+  local v name port psk obfs limit_gb billing_start
   read -rp "选择版本 [4/5/6] 默认 5: " v
   v=${v:-5}
   [[ "$v" =~ ^[456]$ ]] || { echo "版本错误"; return; }
@@ -574,13 +709,14 @@ add_instance() {
     echo "Snell v4/v5 不支持 tls obfs，已自动改为 off"
     obfs=off
   fi
-  read -rp "流量上限，单位G，留空不限: " limit_gb
+  read -rp "每月流量上限，单位G，留空不限: " limit_gb
   limit_gb=${limit_gb:-0}
-  [[ "$limit_gb" =~ ^[0-9]+$ ]] || { echo "流量上限只能填数字"; return; }
+  [[ "$limit_gb" =~ ^[0-9]+$ ]] || { echo "每月流量上限只能填数字"; return; }
 
   install_bin "$v"
   write_unit
   write_limit_timer
+  billing_start=$(now_epoch)
 
   cat > "$CONF/$name.conf" <<EOF
 [snell-server]
@@ -596,6 +732,7 @@ PORT=$port
 PSK=$psk
 OBFS=$obfs
 LIMIT_GB=$limit_gb
+BILLING_START=$billing_start
 EOF
 
   chmod 600 "$CONF/$name.conf" "$CONF/$name.env"
@@ -610,14 +747,14 @@ EOF
 
 list_instances() {
   {
-    printf "实例名称\t版本\t端口\t状态\t已用流量\t流量上限\n"
+    printf "实例名称\t版本\t端口\t状态\t已用流量\t流量上限\t剩余时间\n"
     while IFS= read -r name; do
       [[ -n "$name" ]] || continue
       fix_instance "$name"
       load_instance "$name" >/dev/null || continue
       state=$(instance_state "$name")
       used=$(used_bytes "$name")
-      printf "%s\tv%s\t%s\t%s\t%s\t%s\n" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")"
+      printf "%s\tv%s\t%s\t%s\t%s\t%s\t%s\n" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")" "$(remaining_time_text "${LIMIT_GB:-0}" "${BILLING_START:-0}")"
     done < <(instance_names)
   } | {
     if command -v column >/dev/null 2>&1; then

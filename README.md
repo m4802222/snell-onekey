@@ -36,12 +36,14 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - 端口可自定义，留空自动随机选择
 - PSK 自动生成
 - obfs 默认关闭；v4/v5 不输出 `obfs=tls`
-- 可设置流量上限，单位 GB，留空为不限
+- 可设置每月流量上限，单位 GB，留空为不限
 - 安装完成后只输出可直接复制的 Surge 节点配置
-- 设置流量上限后，系统会每 5 分钟检查一次，超过上限自动停用对应实例
+- 设置流量上限后，系统会每 1 分钟检查一次，超过上限自动停用对应实例
+- 每个实例按安装时间作为月周期起点；下个月同一时间自动清零并重新启动
+- 实例列表会显示距离下次自动重置的剩余天数
 - 流量会累计保存到 `/var/lib/snell-multi`，服务重启后不会从 0 重新算
 - 生成配置时会自动放行本机防火墙端口；流量用完自动停止实例并关闭本机端口
-- 已超限实例不能手动启动、重启、检测连接或升级重启，避免停用后又被拉起
+- 已超限实例不能手动启动、重启、检测连接或升级重启，等下个计费周期自动恢复
 - 旧 v4/v5 实例如果误写了 `obfs=tls`，脚本会自动修复；菜单里也可选择“修复配置”和“复制配置”
 
 ## 支持版本
@@ -59,5 +61,5 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - 二进制目录：`/opt/snell-multi/bin`
 - 累计流量目录：`/var/lib/snell-multi`
 - 流量显示基于 systemd `IPAccounting=true` 并做本地累计保存，列表为中文并显示已用流量和流量上限。
-- 自动停用依赖 `snell-limit-check.timer`，每 5 分钟检查一次。
+- 自动停用和下月恢复依赖 `snell-limit-check.timer`，每 1 分钟检查一次。
 - 脚本会尝试处理本机 `ufw`、`firewalld` 或 `iptables` 端口；云厂商安全组仍需你在控制台单独配置。
