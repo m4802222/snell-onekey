@@ -482,6 +482,13 @@ run_instance_action() {
       print_client_config "$name"
       ;;
     9) diagnose_instance "$name" ;;
+    10)
+      load_instance "$name" >/dev/null || return 1
+      reset_usage "$name"
+      open_port "$PORT"
+      systemctl start "snell@$name"
+      echo "已重置 $name 当前周期流量，并已启动。"
+      ;;
     0) return 0 ;;
     *) echo "未知操作" ;;
   esac
@@ -818,8 +825,9 @@ service_menu() {
   echo "7. 复制配置"
   echo "8. 修复配置"
   echo "9. 检测连接"
+  echo "10. 周期内流量重置"
   echo "0. 返回"
-  op=$(choose_number "请选择，默认 4: " 4 9) || return
+  op=$(choose_number "请选择，默认 4: " 4 10) || return
   run_instance_action "$name" "$op"
 }
 

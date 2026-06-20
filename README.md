@@ -44,6 +44,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - 流量会累计保存到 `/var/lib/snell-multi`，服务重启后不会从 0 重新算
 - 生成配置时会自动放行本机防火墙端口；流量用完自动停止实例并关闭本机端口
 - 已超限实例不能手动启动、重启、检测连接或升级重启，等下个计费周期自动恢复
+- 实例操作菜单支持“周期内流量重置”，可手动清零当前周期流量并重新启动
 - 旧 v4/v5 实例如果误写了 `obfs=tls`，脚本会自动修复；菜单里也可选择“修复配置”和“复制配置”
 
 ## 支持版本
@@ -56,7 +57,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 
 - 每个实例都是独立的 `snell@实例名` systemd 服务。
 - 实例选择菜单会显示实例名、版本、端口、状态、已用流量和上限，方便直接选择。
-- 实例操作支持启动、停止、重启、状态、日志、删除、复制配置、修复配置和检测连接。
+- 实例操作支持启动、停止、重启、状态、日志、删除、复制配置、修复配置、检测连接和周期内流量重置。
 - 配置目录：`/etc/snell-multi`
 - 二进制目录：`/opt/snell-multi/bin`
 - 累计流量目录：`/var/lib/snell-multi`
