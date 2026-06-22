@@ -28,7 +28,7 @@ install_shortcut
 
 read_input() {
   local __var=$1 prompt=$2 default=${3:-} value
-  printf "%s" "$prompt"
+  printf "%s" "$prompt" >&2
   IFS= read -r value || return 1
   value=${value:-$default}
   printf -v "$__var" '%s' "$value"
