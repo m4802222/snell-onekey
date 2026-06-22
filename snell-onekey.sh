@@ -12,13 +12,16 @@ STATE=/var/lib/snell-multi
 UNIT=/etc/systemd/system/snell@.service
 LIMIT_SERVICE=/etc/systemd/system/snell-limit-check.service
 LIMIT_TIMER=/etc/systemd/system/snell-limit-check.timer
+SCRIPT_URL=${SNELL_ONEKEY_SCRIPT_URL:-https://github.com/m4802222/snell-onekey/raw/main/snell-onekey.sh}
 mkdir -p "$BASE/bin" "$CONF" "$STATE"
 
 install_shortcut() {
-  local target=/usr/local/bin/snell src=${BASH_SOURCE[0]:-$0}
-  [[ -x "$target" ]] && return 0
-  [[ -r "$src" ]] || return 0
-  install -m 755 "$src" "$target" 2>/dev/null || true
+  local target=/usr/local/bin/snell tmp
+  tmp=$(mktemp)
+  if command -v curl >/dev/null 2>&1 && curl -fsSL "$SCRIPT_URL" -o "$tmp" 2>/dev/null; then
+    install -m 755 "$tmp" "$target" 2>/dev/null || true
+  fi
+  rm -f "$tmp"
 }
 
 install_shortcut
@@ -26,9 +29,11 @@ install_shortcut
 read_input() {
   local __var=$1 prompt=$2 default=${3:-} value
   if [[ -r /dev/tty && -w /dev/tty ]]; then
-    IFS= read -r -p "$prompt" value </dev/tty
+    printf "%s" "$prompt" >/dev/tty
+    IFS= read -r value </dev/tty
   else
-    IFS= read -r -p "$prompt" value
+    printf "%s" "$prompt"
+    IFS= read -r value
   fi || return 1
   value=${value:-$default}
   printf -v "$__var" '%s' "$value"
@@ -722,21 +727,16 @@ check_limits() {
 
 add_instance() {
   local v name port psk obfs limit_gb billing_start
-  read_input v "选择版本 [4/5/6] 默认 5: " "5" || return
+  read_input v "选择版本 [4/5/6] 默认 5: " "5" || { echo "读取版本失败"; return; }
   [[ "$v" =~ ^[456]$ ]] || { echo "版本错误"; return; }
   name=$(next_instance_name)
-  port=$(choose_port) || return
+  port=$(choose_port) || { echo "端口选择失败"; return; }
   psk=$(rand_psk)
-  read_input obfs "obfs [http/tls/off] 默认 off: " "off" || return
-  [[ "$obfs" =~ ^(tls|http|off)$ ]] || { echo "obfs 只能是 http/tls/off"; return; }
-  if [[ "$obfs" == "tls" && "$v" != "6" ]]; then
-    echo "Snell v4/v5 不支持 tls obfs，已自动改为 off"
-    obfs=off
-  fi
-  read_input limit_gb "每月流量上限，单位G，留空不限: " "0" || return
+  obfs=off
+  read_input limit_gb "每月流量上限，单位G，留空不限: " "0" || { echo "读取流量上限失败"; return; }
   [[ "$limit_gb" =~ ^[0-9]+$ ]] || { echo "每月流量上限只能填数字"; return; }
 
-  install_bin "$v"
+  install_bin "$v" || { echo "Snell v$v 下载或安装失败"; return; }
   write_unit
   write_limit_timer
   billing_start=$(now_epoch)
