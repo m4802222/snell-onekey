@@ -585,15 +585,18 @@ random_port() {
 
 choose_port() {
   local port
-  read_input port "监听端口，留空随机: " "" || return 1
-  if [[ -z "$port" ]]; then
-    CHOSEN_PORT=$(random_port) || return 1
+  while true; do
+    read_input port "监听端口，留空随机: " "" || return 1
+    if [[ -z "$port" ]]; then
+      CHOSEN_PORT=$(random_port) || return 1
+      return
+    fi
+    valid_port "$port" || { echo "端口必须是 1-65535，请重新输入。"; continue; }
+    port_exists_in_config "$port" && { echo "端口已被当前脚本实例使用，请重新输入，或直接回车随机。"; continue; }
+    port_is_listening "$port" && { echo "端口正在被系统占用，请重新输入，或直接回车随机。"; continue; }
+    CHOSEN_PORT=$port
     return
-  fi
-  valid_port "$port" || { echo "端口必须是 1-65535"; return 1; }
-  port_exists_in_config "$port" && { echo "端口已被当前脚本实例使用"; return 1; }
-  port_is_listening "$port" && { echo "端口正在被系统占用"; return 1; }
-  CHOSEN_PORT=$port
+  done
 }
 
 open_port() {
