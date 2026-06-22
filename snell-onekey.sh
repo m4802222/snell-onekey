@@ -14,6 +14,26 @@ LIMIT_SERVICE=/etc/systemd/system/snell-limit-check.service
 LIMIT_TIMER=/etc/systemd/system/snell-limit-check.timer
 mkdir -p "$BASE/bin" "$CONF" "$STATE"
 
+install_shortcut() {
+  local target=/usr/local/bin/snell src=${BASH_SOURCE[0]:-$0}
+  [[ -x "$target" ]] && return 0
+  [[ -r "$src" ]] || return 0
+  install -m 755 "$src" "$target" 2>/dev/null || true
+}
+
+install_shortcut
+
+read_input() {
+  local __var=$1 prompt=$2 default=${3:-} value
+  if [[ -r /dev/tty && -w /dev/tty ]]; then
+    IFS= read -r -p "$prompt" value </dev/tty
+  else
+    IFS= read -r -p "$prompt" value
+  fi || return 1
+  value=${value:-$default}
+  printf -v "$__var" '%s' "$value"
+}
+
 arch() {
   case "$(uname -m)" in
     x86_64|amd64) echo amd64 ;;
@@ -388,8 +408,7 @@ instance_summary() {
 
 choose_number() {
   local prompt=$1 default=$2 max=$3 choice
-  read -rp "$prompt" choice
-  choice=${choice:-$default}
+  read_input choice "$prompt" "$default" || return 1
   [[ "$choice" =~ ^[0-9]+$ ]] || { echo "选择错误" >&2; return 1; }
   [[ "$choice" -ge 0 && "$choice" -le "$max" ]] || { echo "选择错误" >&2; return 1; }
   echo "$choice"
@@ -563,7 +582,7 @@ random_port() {
 
 choose_port() {
   local port
-  read -rp "监听端口，留空随机: " port
+  read_input port "监听端口，留空随机: " "" || return 1
   if [[ -z "$port" ]]; then
     random_port
     return
@@ -703,21 +722,18 @@ check_limits() {
 
 add_instance() {
   local v name port psk obfs limit_gb billing_start
-  read -rp "选择版本 [4/5/6] 默认 5: " v
-  v=${v:-5}
+  read_input v "选择版本 [4/5/6] 默认 5: " "5" || return
   [[ "$v" =~ ^[456]$ ]] || { echo "版本错误"; return; }
   name=$(next_instance_name)
   port=$(choose_port) || return
   psk=$(rand_psk)
-  read -rp "obfs [http/tls/off] 默认 off: " obfs
-  obfs=${obfs:-off}
+  read_input obfs "obfs [http/tls/off] 默认 off: " "off" || return
   [[ "$obfs" =~ ^(tls|http|off)$ ]] || { echo "obfs 只能是 http/tls/off"; return; }
   if [[ "$obfs" == "tls" && "$v" != "6" ]]; then
     echo "Snell v4/v5 不支持 tls obfs，已自动改为 off"
     obfs=off
   fi
-  read -rp "每月流量上限，单位G，留空不限: " limit_gb
-  limit_gb=${limit_gb:-0}
+  read_input limit_gb "每月流量上限，单位G，留空不限: " "0" || return
   [[ "$limit_gb" =~ ^[0-9]+$ ]] || { echo "每月流量上限只能填数字"; return; }
 
   install_bin "$v"
