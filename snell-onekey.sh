@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 if [[ $EUID -ne 0 ]]; then
   command -v sudo >/dev/null || { echo "请用 root 运行，或先安装 sudo"; exit 1; }
@@ -28,13 +28,8 @@ install_shortcut
 
 read_input() {
   local __var=$1 prompt=$2 default=${3:-} value
-  if [[ -r /dev/tty && -w /dev/tty ]]; then
-    printf "%s" "$prompt" >/dev/tty
-    IFS= read -r value </dev/tty
-  else
-    printf "%s" "$prompt"
-    IFS= read -r value
-  fi || return 1
+  printf "%s" "$prompt"
+  IFS= read -r value || return 1
   value=${value:-$default}
   printf -v "$__var" '%s' "$value"
 }
@@ -562,12 +557,15 @@ port_exists_in_config() {
 port_is_listening() {
   local port=$1
   if command -v ss >/dev/null 2>&1; then
-    ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${port}$"
+    if ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${port}$"; then
+      return 0
+    fi
   elif command -v netstat >/dev/null 2>&1; then
-    netstat -ltn 2>/dev/null | awk 'NR>2 {print $4}' | grep -Eq "(^|:)${port}$"
-  else
-    return 1
+    if netstat -ltn 2>/dev/null | awk 'NR>2 {print $4}' | grep -Eq "(^|:)${port}$"; then
+      return 0
+    fi
   fi
+  return 1
 }
 
 valid_port() {
@@ -589,13 +587,13 @@ choose_port() {
   local port
   read_input port "监听端口，留空随机: " "" || return 1
   if [[ -z "$port" ]]; then
-    random_port
+    CHOSEN_PORT=$(random_port) || return 1
     return
   fi
   valid_port "$port" || { echo "端口必须是 1-65535"; return 1; }
   port_exists_in_config "$port" && { echo "端口已被当前脚本实例使用"; return 1; }
   port_is_listening "$port" && { echo "端口正在被系统占用"; return 1; }
-  echo "$port"
+  CHOSEN_PORT=$port
 }
 
 open_port() {
@@ -628,14 +626,14 @@ install_bin() {
   local v=$1 force=${2:-0} full url tmp
   full=$(ver_full "$v")
   [[ "$force" != 1 && -x "$BASE/bin/snell-server-v$v" ]] && return
-  command -v curl >/dev/null || { apt update && apt install -y curl unzip; }
-  command -v unzip >/dev/null || { apt update && apt install -y unzip; }
-  tmp=$(mktemp -d)
+  command -v curl >/dev/null || { apt update && apt install -y curl unzip; } || return 1
+  command -v unzip >/dev/null || { apt update && apt install -y unzip; } || return 1
+  tmp=$(mktemp -d) || return 1
   url="https://dl.nssurge.com/snell/snell-server-${full}-linux-$(arch).zip"
   echo "下载 Snell v$v: $url"
-  curl -fL --retry 3 -o "$tmp/snell.zip" "$url"
-  unzip -o "$tmp/snell.zip" -d "$tmp" >/dev/null
-  install -m 755 "$tmp/snell-server" "$BASE/bin/snell-server-v$v"
+  curl -fL --retry 3 -o "$tmp/snell.zip" "$url" || { rm -rf "$tmp"; return 1; }
+  unzip -o "$tmp/snell.zip" -d "$tmp" >/dev/null || { rm -rf "$tmp"; return 1; }
+  install -m 755 "$tmp/snell-server" "$BASE/bin/snell-server-v$v" || { rm -rf "$tmp"; return 1; }
   rm -rf "$tmp"
 }
 
@@ -730,7 +728,9 @@ add_instance() {
   read_input v "选择版本 [4/5/6] 默认 5: " "5" || { echo "读取版本失败"; return; }
   [[ "$v" =~ ^[456]$ ]] || { echo "版本错误"; return; }
   name=$(next_instance_name)
-  port=$(choose_port) || { echo "端口选择失败"; return; }
+  CHOSEN_PORT=""
+  choose_port || { echo "端口选择失败"; return; }
+  port=$CHOSEN_PORT
   psk=$(rand_psk)
   obfs=off
   read_input limit_gb "每月流量上限，单位G，留空不限: " "0" || { echo "读取流量上限失败"; return; }
