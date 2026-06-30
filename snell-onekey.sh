@@ -12,14 +12,15 @@ STATE=/var/lib/snell-multi
 UNIT=/etc/systemd/system/snell@.service
 LIMIT_SERVICE=/etc/systemd/system/snell-limit-check.service
 LIMIT_TIMER=/etc/systemd/system/snell-limit-check.timer
-SCRIPT_URL=${SNELL_ONEKEY_SCRIPT_URL:-https://github.com/m4802222/snell-onekey/raw/main/snell-onekey.sh}
+SCRIPT_VERSION=2026.07.01.1
+SCRIPT_URL=${SNELL_ONEKEY_SCRIPT_URL:-https://raw.githubusercontent.com/m4802222/snell-onekey/main/snell-onekey.sh}
 SNELL_DOWNLOAD_BASE=${SNELL_DOWNLOAD_BASE:-https://dl.nssurge.com/snell}
 mkdir -p "$BASE/bin" "$CONF" "$STATE"
 
 install_shortcut() {
   local target=/usr/local/bin/snell tmp
   tmp=$(mktemp)
-  if command -v curl >/dev/null 2>&1 && curl -fsSL "$SCRIPT_URL" -o "$tmp" 2>/dev/null; then
+  if command -v curl >/dev/null 2>&1 && curl -fsSL -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$SCRIPT_URL" -o "$tmp" 2>/dev/null; then
     install -m 755 "$tmp" "$target" 2>/dev/null || true
   fi
   rm -f "$tmp"
@@ -49,7 +50,7 @@ need_systemd() {
 当前多实例管理脚本依赖 systemd 的模板服务和 IPAccounting 流量统计。
 Alpine/OpenRC 请使用仓库里的 standalone Snell v4 安装脚本：
 
-  bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
+  bash <(curl -fsSL https://raw.githubusercontent.com/m4802222/snell-onekey/main/install-snell-v4-standalone.sh)
 
 EOF
     exit 1
@@ -973,7 +974,7 @@ write_limit_timer
 
 while true; do
   echo
-  echo "==== Snell v4/v5/v6 一键管理 ===="
+  echo "==== Snell v4/v5/v6 一键管理 v${SCRIPT_VERSION} ===="
   echo "1. 添加 Snell 实例"
   echo "2. 查看实例和流量"
   echo "3. 启停/日志/删除"

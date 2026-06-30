@@ -7,7 +7,7 @@ Snell v4/v5/v6 一键安装和管理脚本，面向 Surge 使用。
 适合 Debian、Ubuntu 等 `systemd` 系统。支持多个 Snell 实例、流量统计、流量上限和菜单管理。
 
 ```bash
-bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/m4802222/snell-onekey/main/install.sh)
 ```
 
 安装后运行：
@@ -44,7 +44,7 @@ systemd status:
 适合 Alpine/OpenRC，或只需要单个 Snell v4 节点的服务器。
 
 ```bash
-bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/m4802222/snell-onekey/main/install-snell-v4-standalone.sh)
 ```
 
 默认行为：
@@ -58,9 +58,9 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snel
 指定参数示例：
 
 ```bash
-SNELL_PORT=20151 bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
-SNELL_PSK='your-fixed-psk' bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
-SNELL_IPV6=true bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
+SNELL_PORT=20151 bash <(curl -fsSL https://raw.githubusercontent.com/m4802222/snell-onekey/main/install-snell-v4-standalone.sh)
+SNELL_PSK='your-fixed-psk' bash <(curl -fsSL https://raw.githubusercontent.com/m4802222/snell-onekey/main/install-snell-v4-standalone.sh)
+SNELL_IPV6=true bash <(curl -fsSL https://raw.githubusercontent.com/m4802222/snell-onekey/main/install-snell-v4-standalone.sh)
 ```
 
 ## 版本
