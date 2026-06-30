@@ -866,23 +866,25 @@ EOF
 }
 
 list_instances() {
-  {
-    printf "实例名称\t版本\t端口\t状态\t已用流量\t流量上限\t剩余时间\n"
-    while IFS= read -r name; do
-      [[ -n "$name" ]] || continue
-      fix_instance "$name"
-      load_instance "$name" >/dev/null || continue
-      state=$(instance_state "$name")
-      used=$(used_bytes "$name")
-      printf "%s\tv%s\t%s\t%s\t%s\t%s\t%s\n" "$name" "$VER" "$PORT" "$(state_text "$state")" "$(human_bytes "$used")" "$(traffic_limit_text "${LIMIT_GB:-0}")" "$(remaining_time_text "${LIMIT_GB:-0}" "${BILLING_START:-0}")"
-    done < <(instance_names)
-  } | {
-    if command -v column >/dev/null 2>&1; then
-      column -t -s $'\t'
-    else
-      cat
-    fi
-  }
+  local name state used found=0
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    found=1
+    fix_instance "$name"
+    load_instance "$name" >/dev/null || continue
+    state=$(instance_state "$name")
+    used=$(used_bytes "$name")
+    echo "实例名称: $name"
+    echo "版本: v$VER"
+    echo "端口: $PORT"
+    echo "状态: $(state_text "$state")"
+    echo "已用流量: $(human_bytes "$used")"
+    echo "流量上限: $(traffic_limit_text "${LIMIT_GB:-0}")"
+    echo "剩余时间: $(remaining_time_text "${LIMIT_GB:-0}" "${BILLING_START:-0}")"
+    echo
+  done < <(instance_names)
+
+  [[ "$found" -eq 1 ]] || echo "暂无实例"
 }
 
 diagnose_instance() {
