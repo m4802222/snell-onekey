@@ -467,6 +467,20 @@ choose_number() {
   echo "$choice"
 }
 
+pause_return() {
+  local _
+  [[ -t 0 ]] || return 0
+  echo
+  printf "按 Enter 返回..."
+  IFS= read -r _ || true
+}
+
+confirm_action() {
+  local answer prompt=${1:-"确认继续？输入 y 确认: "}
+  read_input answer "$prompt" "n" || return 1
+  [[ "$answer" =~ ^[Yy]$ ]]
+}
+
 select_instance() {
   local names=() name i choice
   while IFS= read -r name; do
@@ -585,11 +599,10 @@ print_client_config() {
 }
 
 print_start_details() {
-  local name=$1 state listen
+  local name=$1 state
   load_instance "$name" >/dev/null || return 1
   sleep 1
   state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
-  listen=$(ss -lntup 2>/dev/null | grep ":$PORT" || true)
 
   echo
   echo "服务启动详情："
@@ -598,19 +611,6 @@ print_start_details() {
   echo
   echo "systemd status:"
   systemctl --no-pager --full status "snell@$name" || true
-  echo
-  echo "进程："
-  ps w | grep '[s]nell-server' | grep "$CONF/$name.conf" || true
-  echo
-  echo "监听："
-  if [[ -n "$listen" ]]; then
-    echo "$listen"
-  else
-    echo "未检测到 TCP $PORT 监听"
-  fi
-  echo
-  echo "最近日志："
-  journalctl -u "snell@$name" -n 20 --no-pager || true
 }
 
 host_prefix() {
@@ -929,21 +929,34 @@ service_menu() {
   local name op
   name=$(select_instance) || return
 
-  echo
-  echo "选择操作："
-  echo "1. 启动"
-  echo "2. 停止"
-  echo "3. 重启"
-  echo "4. 查看状态"
-  echo "5. 查看日志"
-  echo "6. 删除"
-  echo "7. 复制配置"
-  echo "8. 修复配置"
-  echo "9. 检测连接"
-  echo "10. 周期内流量重置"
-  echo "0. 返回"
-  op=$(choose_number "请选择，默认 4: " 4 10) || return
-  run_instance_action "$name" "$op"
+  while true; do
+    echo
+    echo "==== 实例操作：$name ===="
+    instance_summary "$name" || true
+    echo
+    echo "1. 启动"
+    echo "2. 停止"
+    echo "3. 重启"
+    echo "4. 查看状态"
+    echo "5. 查看日志"
+    echo "6. 删除"
+    echo "7. 复制配置"
+    echo "8. 修复配置"
+    echo "9. 检测连接"
+    echo "10. 周期内流量重置"
+    echo "0. 返回主菜单"
+    op=$(choose_number "请选择，默认 4: " 4 10) || { pause_return; continue; }
+    [[ "$op" -eq 0 ]] && return
+
+    if [[ "$op" -eq 6 ]]; then
+      confirm_action "确认删除实例 $name？输入 y 删除: " || { echo "已取消删除。"; pause_return; continue; }
+    fi
+
+    run_instance_action "$name" "$op"
+    [[ "$op" -eq 5 ]] && continue
+    pause_return
+    [[ "$op" -eq 6 ]] && return
+  done
 }
 
 if [[ "${1:-}" == "check-limits" ]]; then
@@ -968,10 +981,19 @@ while true; do
   echo "0. 退出"
   n=$(choose_number "请选择，默认 1: " 1 4) || continue
   case "$n" in
-    1) add_instance ;;
-    2) list_instances ;;
+    1) add_instance; pause_return ;;
+    2) list_instances; pause_return ;;
     3) service_menu ;;
-    4) upgrade_version 4; upgrade_version 5; upgrade_version 6 ;;
+    4)
+      if confirm_action "确认升级/重装 v4/v5/v6 并重启对应实例？输入 y 继续: "; then
+        upgrade_version 4
+        upgrade_version 5
+        upgrade_version 6
+      else
+        echo "已取消升级。"
+      fi
+      pause_return
+      ;;
     0) exit 0 ;;
     *) echo "选择错误" ;;
   esac

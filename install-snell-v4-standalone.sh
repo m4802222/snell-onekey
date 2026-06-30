@@ -232,20 +232,12 @@ EOF
     systemctl is-active "$SNELL_SERVICE" || true
     printf '\nsystemd status:\n'
     systemctl --no-pager --full status "$SNELL_SERVICE" || true
-    printf '\n最近日志:\n'
-    journalctl -u "$SNELL_SERVICE" -n 20 --no-pager || true
   else
     printf 'OpenRC status:\n'
     rc-service "$SNELL_SERVICE" status || true
   fi
 
   cat <<EOF
-
-进程：
-$(ps w | grep '[s]nell-server' || true)
-
-监听：
-$(ss -lntup 2>/dev/null | grep ":${SNELL_PORT}" || true)
 
 提示：
 1. 把 YOUR_SERVER_IP 替换为 VPS 公网 IP。
