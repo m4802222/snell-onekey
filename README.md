@@ -2,7 +2,9 @@
 
 同一台 VPS 上共存 Snell v4、v5、v6，可交互添加多个实例，并支持菜单里一键升级 v4/v5/v6。
 
-## 一键安装
+本仓库同时提供一个 Snell v4 standalone 安装脚本，适合 Alpine/OpenRC 或只需要部署一个 Surge Snell v4 节点的场景。
+
+## systemd 多实例管理安装
 
 ```bash
 bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install.sh)
@@ -20,6 +22,42 @@ snell
 bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey.sh)
 ```
 
+> 多实例管理脚本依赖 `systemd` 和 `IPAccounting=true` 统计流量。Alpine/OpenRC 请使用下面的 standalone 脚本。
+
+## Snell v4 standalone 安装
+
+适合：
+
+- Alpine/OpenRC
+- Debian/Ubuntu/systemd 但只需要单个 Snell v4 服务
+- Surge 客户端使用 Snell v4
+
+```bash
+bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
+```
+
+默认：
+
+- Snell 版本：`v4.1.1`
+- 监听端口：`20151`
+- 配置路径：`/etc/snell/snell-server.conf`
+- 服务名：`snell-server`
+- 自动生成随机 PSK
+- 自动验证 TCP `20151` 是否监听
+- 输出 Surge 配置：
+
+```text
+snell, YOUR_SERVER_IP, 20151, psk=YOUR_GENERATED_PSK, version=4
+```
+
+可选参数：
+
+```bash
+SNELL_PORT=20151 bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
+SNELL_PSK='your-fixed-psk' bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
+SNELL_IPV6=true bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
+```
+
 ## 菜单功能
 
 ```text
@@ -33,7 +71,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 添加实例时只需要选择版本，直接回车默认安装 v5：
 
 - 实例名自动使用 VPS 主机名并按顺序编号，例如 `myvps-1`、`myvps-2`
-- 端口可自定义，留空自动随机选择
+- 端口可自定义，留空默认 `20151`，冲突时自动随机选择
 - PSK 自动生成
 - obfs 默认关闭；v4/v5 不输出 `obfs=tls`
 - 可设置每月流量上限，单位 GB，留空为不限
@@ -56,6 +94,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 ## 说明
 
 - 每个实例都是独立的 `snell@实例名` systemd 服务。
+- 多实例脚本只支持 systemd；Alpine/OpenRC 使用 `install-snell-v4-standalone.sh`。
 - 实例选择菜单会显示实例名、版本、端口、状态、已用流量和上限，方便直接选择。
 - 实例操作支持启动、停止、重启、状态、日志、删除、复制配置、修复配置、检测连接和周期内流量重置。
 - 配置目录：`/etc/snell-multi`
@@ -64,3 +103,4 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/snell-onekey
 - 流量显示基于 systemd `IPAccounting=true` 并做本地累计保存，列表为中文并显示已用流量和流量上限。
 - 自动停用和下月恢复依赖 `snell-limit-check.timer`，每 1 分钟检查一次。
 - 脚本会尝试处理本机 `ufw`、`firewalld` 或 `iptables` 端口；云厂商安全组仍需你在控制台单独配置。
+- Snell v4 是 Surge 使用的协议版本；添加节点时使用脚本输出的 `snell, ... version=4` 配置行。

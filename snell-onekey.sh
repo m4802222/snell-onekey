@@ -13,6 +13,8 @@ UNIT=/etc/systemd/system/snell@.service
 LIMIT_SERVICE=/etc/systemd/system/snell-limit-check.service
 LIMIT_TIMER=/etc/systemd/system/snell-limit-check.timer
 SCRIPT_URL=${SNELL_ONEKEY_SCRIPT_URL:-https://github.com/m4802222/snell-onekey/raw/main/snell-onekey.sh}
+DEFAULT_SNELL_PORT=${DEFAULT_SNELL_PORT:-20151}
+SNELL_DOWNLOAD_BASE=${SNELL_DOWNLOAD_BASE:-https://dl.nssurge.com/snell}
 mkdir -p "$BASE/bin" "$CONF" "$STATE"
 
 install_shortcut() {
@@ -40,6 +42,37 @@ arch() {
     aarch64|arm64) echo aarch64 ;;
     *) echo "不支持的架构: $(uname -m)"; exit 1 ;;
   esac
+}
+
+need_systemd() {
+  if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+    cat >&2 <<'EOF'
+当前多实例管理脚本依赖 systemd 的模板服务和 IPAccounting 流量统计。
+Alpine/OpenRC 请使用仓库里的 standalone Snell v4 安装脚本：
+
+  bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snell-v4-standalone.sh)
+
+EOF
+    exit 1
+  fi
+}
+
+install_deps() {
+  local deps=(ca-certificates curl unzip openssl)
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${deps[@]}" iproute2
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y "${deps[@]}" iproute
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y "${deps[@]}" iproute
+  elif command -v apk >/dev/null 2>&1; then
+    apk update
+    apk add --no-cache "${deps[@]}" libstdc++ gcompat iproute2-ss
+  else
+    echo "无法识别包管理器，请先安装 curl unzip openssl ca-certificates。"
+    return 1
+  fi
 }
 
 ver_full() {
@@ -357,9 +390,30 @@ fix_listen_for_instance() {
   fi
 }
 
+fix_reuse_for_instance() {
+  local name=$1 conf="$CONF/$1.conf"
+  [[ -f "$conf" ]] || return 0
+  if grep -qiE '^[[:space:]]*reuse[[:space:]]*=' "$conf"; then
+    sed -i.bak '/^[[:space:]]*reuse[[:space:]]*=/Id' "$conf"
+    rm -f "$conf.bak"
+    echo "$name: 已移除服务端配置中的 reuse，reuse 属于 Surge 客户端参数"
+  fi
+}
+
+fix_ipv6_for_instance() {
+  local name=$1 conf="$CONF/$1.conf"
+  [[ -f "$conf" ]] || return 0
+  if ! grep -qiE '^[[:space:]]*ipv6[[:space:]]*=' "$conf"; then
+    echo "ipv6 = false" >> "$conf"
+    echo "$name: 已补充 ipv6 = false"
+  fi
+}
+
 fix_instance() {
   fix_obfs_for_instance "$1"
   fix_listen_for_instance "$1"
+  fix_reuse_for_instance "$1"
+  fix_ipv6_for_instance "$1"
 }
 
 repair_all_instances() {
@@ -586,9 +640,13 @@ random_port() {
 choose_port() {
   local port
   while true; do
-    read_input port "监听端口，留空随机: " "" || return 1
+    read_input port "监听端口，留空默认 ${DEFAULT_SNELL_PORT}，冲突则随机: " "" || return 1
     if [[ -z "$port" ]]; then
-      CHOSEN_PORT=$(random_port) || return 1
+      if ! port_exists_in_config "$DEFAULT_SNELL_PORT" && ! port_is_listening "$DEFAULT_SNELL_PORT"; then
+        CHOSEN_PORT=$DEFAULT_SNELL_PORT
+      else
+        CHOSEN_PORT=$(random_port) || return 1
+      fi
       return
     fi
     valid_port "$port" || { echo "端口必须是 1-65535，请重新输入。"; continue; }
@@ -629,10 +687,11 @@ install_bin() {
   local v=$1 force=${2:-0} full url tmp
   full=$(ver_full "$v")
   [[ "$force" != 1 && -x "$BASE/bin/snell-server-v$v" ]] && return
-  command -v curl >/dev/null || { apt update && apt install -y curl unzip; } || return 1
-  command -v unzip >/dev/null || { apt update && apt install -y unzip; } || return 1
+  if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+    install_deps || return 1
+  fi
   tmp=$(mktemp -d) || return 1
-  url="https://dl.nssurge.com/snell/snell-server-${full}-linux-$(arch).zip"
+  url="${SNELL_DOWNLOAD_BASE}/snell-server-${full}-linux-$(arch).zip"
   echo "下载 Snell v$v: $url"
   curl -fL --retry 3 -o "$tmp/snell.zip" "$url" || { rm -rf "$tmp"; return 1; }
   unzip -o "$tmp/snell.zip" -d "$tmp" >/dev/null || { rm -rf "$tmp"; return 1; }
@@ -748,7 +807,7 @@ add_instance() {
 [snell-server]
 listen = 0.0.0.0:$port
 psk = $psk
-reuse = true
+ipv6 = false
 EOF
   [[ "$obfs" != off ]] && echo "obfs = $obfs" >> "$CONF/$name.conf"
 
@@ -851,11 +910,13 @@ service_menu() {
 }
 
 if [[ "${1:-}" == "check-limits" ]]; then
+  need_systemd
   repair_all_instances
   check_limits
   exit 0
 fi
 
+need_systemd
 repair_all_instances
 write_unit
 write_limit_timer
