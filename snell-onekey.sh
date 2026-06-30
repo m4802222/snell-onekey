@@ -551,7 +551,7 @@ run_instance_action() {
       ;;
     4)
       enforce_limit "$name" 0 >/dev/null 2>&1 || true
-      systemctl status "snell@$name" --no-pager
+      systemctl status "snell@$name" --no-pager --lines=0
       ;;
     5) journalctl -u "snell@$name" -f ;;
     6)
@@ -611,7 +611,7 @@ print_start_details() {
   echo "systemd is-active: ${state:-unknown}"
   echo
   echo "systemd status:"
-  systemctl --no-pager --full status "snell@$name" || true
+  systemctl --no-pager --full --lines=0 status "snell@$name" || true
 }
 
 host_prefix() {
