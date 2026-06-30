@@ -44,7 +44,7 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snel
 - 服务名：`snell-server`
 - 自动生成随机 PSK
 - 自动验证实际端口是否监听
-- 输出 Surge 配置：
+- 输出 Surge 配置和服务启动详情：
 
 ```text
 snell, YOUR_SERVER_IP, RANDOM_PORT, psk=YOUR_GENERATED_PSK, version=4
@@ -75,7 +75,8 @@ SNELL_IPV6=true bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/m
 - PSK 自动生成
 - obfs 默认关闭；v4/v5 不输出 `obfs=tls`
 - 可设置每月流量上限，单位 GB，留空为不限
-- 安装完成后只输出可直接复制的 Surge 节点配置
+- 安装完成后先输出可直接复制的 Surge 节点配置，再显示服务状态、进程、监听端口和最近日志
+- v4/v5/v6 实例安装、启动、重启、修复重启和升级重启后都会显示服务启动详情
 - 设置流量上限后，系统会每 1 分钟检查一次，超过上限自动停用对应实例
 - 每个实例按安装时间作为月周期起点；下个月同一时间自动清零并重新启动
 - 实例列表会显示距离下次自动重置的剩余天数

@@ -518,6 +518,8 @@ run_instance_action() {
       assert_can_run "$name" "启动" || return 1
       open_port "$PORT"
       systemctl start "snell@$name"
+      echo "已启动 $name"
+      print_start_details "$name"
       ;;
     2)
       load_instance "$name" >/dev/null || return 1
@@ -529,6 +531,8 @@ run_instance_action() {
       assert_can_run "$name" "重启" || return 1
       open_port "$PORT"
       systemctl restart "snell@$name"
+      echo "已重启 $name"
+      print_start_details "$name"
       ;;
     4)
       enforce_limit "$name" 0 >/dev/null 2>&1 || true
@@ -552,6 +556,7 @@ run_instance_action() {
       echo "已修复并重启 $name"
       echo "复制配置："
       print_client_config "$name"
+      print_start_details "$name"
       ;;
     9) diagnose_instance "$name" ;;
     10)
@@ -560,6 +565,7 @@ run_instance_action() {
       open_port "$PORT"
       systemctl start "snell@$name"
       echo "已重置 $name 当前周期流量，并已启动。"
+      print_start_details "$name"
       ;;
     0) return 0 ;;
     *) echo "未知操作" ;;
@@ -576,6 +582,35 @@ print_client_config() {
   else
     echo "${name} = snell, ${server_ip}, ${PORT}, psk=${PSK}, version=${VER}, obfs=${OBFS}"
   fi
+}
+
+print_start_details() {
+  local name=$1 state listen
+  load_instance "$name" >/dev/null || return 1
+  sleep 1
+  state=$(systemctl is-active "snell@$name" 2>/dev/null || true)
+  listen=$(ss -lntup 2>/dev/null | grep ":$PORT" || true)
+
+  echo
+  echo "服务启动详情："
+  echo "实例: $name"
+  echo "systemd is-active: ${state:-unknown}"
+  echo
+  echo "systemd status:"
+  systemctl --no-pager --full status "snell@$name" || true
+  echo
+  echo "进程："
+  ps w | grep '[s]nell-server' | grep "$CONF/$name.conf" || true
+  echo
+  echo "监听："
+  if [[ -n "$listen" ]]; then
+    echo "$listen"
+  else
+    echo "未检测到 TCP $PORT 监听"
+  fi
+  echo
+  echo "最近日志："
+  journalctl -u "snell@$name" -n 20 --no-pager || true
 }
 
 host_prefix() {
@@ -706,6 +741,10 @@ restart_version() {
     [[ "${VER:-}" == "$v" ]] || continue
     enforce_limit "$name" 1 >/dev/null 2>&1 && continue
     systemctl restart "snell@$name" || true
+    echo
+    echo "v$v 实例 $name 重启后详情："
+    print_client_config "$name"
+    print_start_details "$name"
   done
 }
 
@@ -823,6 +862,7 @@ EOF
   echo
   echo "安装完成，复制下面配置即可："
   print_client_config "$name"
+  print_start_details "$name"
 }
 
 list_instances() {

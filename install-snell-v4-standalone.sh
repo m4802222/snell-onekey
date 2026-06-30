@@ -208,7 +208,8 @@ open_local_firewall() {
 }
 
 validate() {
-  local psk
+  local psk init_system
+  init_system="$(detect_init)"
   sleep 1
   if ss -lntup 2>/dev/null | grep -q ":${SNELL_PORT}"; then
     log "已监听 TCP ${SNELL_PORT}"
@@ -222,6 +223,29 @@ validate() {
 
 Surge 配置：
 snell, YOUR_SERVER_IP, ${SNELL_PORT}, psk=${psk}, version=4
+
+服务启动详情：
+EOF
+
+  if [ "$init_system" = "systemd" ]; then
+    printf 'systemd is-active: '
+    systemctl is-active "$SNELL_SERVICE" || true
+    printf '\nsystemd status:\n'
+    systemctl --no-pager --full status "$SNELL_SERVICE" || true
+    printf '\n最近日志:\n'
+    journalctl -u "$SNELL_SERVICE" -n 20 --no-pager || true
+  else
+    printf 'OpenRC status:\n'
+    rc-service "$SNELL_SERVICE" status || true
+  fi
+
+  cat <<EOF
+
+进程：
+$(ps w | grep '[s]nell-server' || true)
+
+监听：
+$(ss -lntup 2>/dev/null | grep ":${SNELL_PORT}" || true)
 
 提示：
 1. 把 YOUR_SERVER_IP 替换为 VPS 公网 IP。
