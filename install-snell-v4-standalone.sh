@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 SNELL_VERSION="${SNELL_VERSION:-4.1.1}"
-SNELL_PORT="${SNELL_PORT:-20151}"
+SNELL_PORT="${SNELL_PORT:-}"
 SNELL_PSK="${SNELL_PSK:-}"
 SNELL_IPV6="${SNELL_IPV6:-false}"
 SNELL_CONF_DIR="${SNELL_CONF_DIR:-/etc/snell}"
@@ -50,6 +50,42 @@ detect_init() {
   else
     die "不支持的 init 系统，需要 systemd 或 OpenRC"
   fi
+}
+
+valid_port() {
+  [[ "${1:-}" =~ ^[0-9]+$ ]] && [[ "$1" -ge 1 && "$1" -le 65535 ]]
+}
+
+port_is_listening() {
+  local port=$1
+  if command_exists ss; then
+    ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${port}$"
+  elif command_exists netstat; then
+    netstat -ltn 2>/dev/null | awk 'NR>2 {print $4}' | grep -Eq "(^|:)${port}$"
+  else
+    return 1
+  fi
+}
+
+random_port() {
+  local port
+  while true; do
+    port=$((20000 + RANDOM % 40000))
+    port_is_listening "$port" && continue
+    printf '%s' "$port"
+    return
+  done
+}
+
+choose_port() {
+  if [ -n "$SNELL_PORT" ]; then
+    valid_port "$SNELL_PORT" || die "SNELL_PORT 必须是 1-65535"
+    port_is_listening "$SNELL_PORT" && die "端口 ${SNELL_PORT} 已被占用"
+    return
+  fi
+
+  SNELL_PORT="$(random_port)"
+  log "随机端口: ${SNELL_PORT}"
 }
 
 install_deps() {
@@ -201,6 +237,7 @@ main() {
   log "OS: ${os_family}"
   log "init: ${init_system}"
   install_deps "$os_family"
+  choose_port
   download_server
   write_config
   open_local_firewall

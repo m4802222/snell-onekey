@@ -39,15 +39,15 @@ bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/main/install-snel
 默认：
 
 - Snell 版本：`v4.1.1`
-- 监听端口：`20151`
+- 监听端口：随机未占用端口
 - 配置路径：`/etc/snell/snell-server.conf`
 - 服务名：`snell-server`
 - 自动生成随机 PSK
-- 自动验证 TCP `20151` 是否监听
+- 自动验证实际端口是否监听
 - 输出 Surge 配置：
 
 ```text
-snell, YOUR_SERVER_IP, 20151, psk=YOUR_GENERATED_PSK, version=4
+snell, YOUR_SERVER_IP, RANDOM_PORT, psk=YOUR_GENERATED_PSK, version=4
 ```
 
 可选参数：
@@ -71,7 +71,7 @@ SNELL_IPV6=true bash <(curl -fsSL https://github.com/m4802222/snell-onekey/raw/m
 添加实例时只需要选择版本，直接回车默认安装 v5：
 
 - 实例名自动使用 VPS 主机名并按顺序编号，例如 `myvps-1`、`myvps-2`
-- 端口可自定义，留空默认 `20151`，冲突时自动随机选择
+- 端口可自定义，留空随机选择未占用端口
 - PSK 自动生成
 - obfs 默认关闭；v4/v5 不输出 `obfs=tls`
 - 可设置每月流量上限，单位 GB，留空为不限

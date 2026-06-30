@@ -13,7 +13,6 @@ UNIT=/etc/systemd/system/snell@.service
 LIMIT_SERVICE=/etc/systemd/system/snell-limit-check.service
 LIMIT_TIMER=/etc/systemd/system/snell-limit-check.timer
 SCRIPT_URL=${SNELL_ONEKEY_SCRIPT_URL:-https://github.com/m4802222/snell-onekey/raw/main/snell-onekey.sh}
-DEFAULT_SNELL_PORT=${DEFAULT_SNELL_PORT:-20151}
 SNELL_DOWNLOAD_BASE=${SNELL_DOWNLOAD_BASE:-https://dl.nssurge.com/snell}
 mkdir -p "$BASE/bin" "$CONF" "$STATE"
 
@@ -640,13 +639,9 @@ random_port() {
 choose_port() {
   local port
   while true; do
-    read_input port "监听端口，留空默认 ${DEFAULT_SNELL_PORT}，冲突则随机: " "" || return 1
+    read_input port "监听端口，留空随机: " "" || return 1
     if [[ -z "$port" ]]; then
-      if ! port_exists_in_config "$DEFAULT_SNELL_PORT" && ! port_is_listening "$DEFAULT_SNELL_PORT"; then
-        CHOSEN_PORT=$DEFAULT_SNELL_PORT
-      else
-        CHOSEN_PORT=$(random_port) || return 1
-      fi
+      CHOSEN_PORT=$(random_port) || return 1
       return
     fi
     valid_port "$port" || { echo "端口必须是 1-65535，请重新输入。"; continue; }
